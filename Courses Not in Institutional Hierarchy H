@@ -1,0 +1,62 @@
+
+/*
+QUERY NAME: Courses Without Institutional Hierarchy Assignments
+
+PURPOSE:
+Identifies Blackboard Learn courses that are not assigned
+to an active institutional hierarchy relationship.
+
+DATA SOURCES:
+- CDM_LMS.COURSE: Course details, status, and timestamps.
+- CDM_LMS.TERM: Academic term names and dates.
+- CDM_LMS.INSTITUTION_HIERARCHY_COURSE:
+  Links courses to institutional hierarchy assignments.
+
+FIELDS RETURNED:
+Course ID, course number, course name, term information,
+availability/enabled indicators, and creation/modification times.
+
+FILTERING:
+- Excludes courses marked as deleted.
+- Uses LEFT JOIN to check for hierarchy assignments
+  where ROW_DELETED_TIME IS NULL.
+- Includes only courses with no matching undeleted
+  institutional hierarchy assignment.
+- Includes courses regardless of availability or enabled status.
+
+SORTING:
+Results are sorted by term start date, course number,
+and course name in ascending order.
+
+NOTES:
+- Courses without an associated term are still included.
+- A course with only deleted hierarchy assignments is included.
+- The query does not filter by academic year or term.
+- Results can help identify courses missing institutional
+  hierarchy assignments for review or correction.
+*/
+
+SELECT
+    c.ID,
+    c.COURSE_NUMBER,
+    c.NAME AS COURSE_NAME,
+    c.TERM_ID,
+    t.NAME AS TERM_NAME,
+    t.START_DATE AS TERM_START_DATE,
+    t.END_DATE AS TERM_END_DATE,
+    c.AVAILABLE_IND,
+    c.ENABLED_IND,
+    c.CREATED_TIME,
+    c.MODIFIED_TIME
+FROM CDM_LMS.COURSE c
+LEFT JOIN CDM_LMS.TERM t
+    ON t.ID = c.TERM_ID
+LEFT JOIN CDM_LMS.INSTITUTION_HIERARCHY_COURSE ihc
+    ON ihc.COURSE_ID = c.ID
+    AND ihc.ROW_DELETED_TIME IS NULL
+WHERE c.ROW_DELETED_TIME IS NULL
+    AND ihc.COURSE_ID IS NULL
+ORDER BY
+    t.START_DATE,
+    c.COURSE_NUMBER,
+    c.NAME;
