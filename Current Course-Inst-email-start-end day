@@ -1,0 +1,169 @@
+
+/*
+QUERY NAME: Current Active Courses with Instructor Email Addresses
+
+PURPOSE:
+Retrieves Blackboard Learn courses that are currently
+available, enabled, and fall within their scheduled
+start and end dates.
+
+The query also identifies instructors assigned to each
+course and returns their email addresses.
+
+DATA SOURCES:
+1. CDM_LMS.COURSE (c)
+   Contains Blackboard course information, including
+   course numbers, names, availability, and dates.
+
+2. CDM_LMS.PERSON_COURSE (pc)
+   Connects users to courses and identifies their
+   assigned course roles.
+
+3. CDM_LMS.PERSON (p)
+   Contains user information, including email addresses.
+
+TABLE RELATIONSHIPS:
+1. COURSE.ID = PERSON_COURSE.COURSE_ID
+   Connects each course to its enrolled users.
+
+2. PERSON_COURSE.PERSON_ID = PERSON.ID
+   Connects course enrollments to user records.
+
+Both relationships use LEFT JOIN so that courses
+without matching instructors remain in the results.
+
+FIELDS RETURNED:
+- COURSE_ID        : Blackboard course number.
+- COURSE_NAME      : Name of the Blackboard course.
+- INSTRUCTOR_EMAIL : Email address of an assigned instructor.
+- START_DATE       : Scheduled course start date.
+- END_DATE         : Scheduled course end date.
+
+INSTRUCTOR IDENTIFICATION:
+The first LEFT JOIN includes the conditions:
+
+1. pc.COURSE_ROLE = 'I'
+   Restricts matching course enrollments to users
+   assigned the Instructor role.
+
+2. pc.ROW_DELETED_TIME IS NULL
+   Excludes instructor enrollment records that have
+   been marked as deleted.
+
+The second LEFT JOIN includes:
+
+3. p.ROW_DELETED_TIME IS NULL
+   Excludes instructor person records marked as deleted.
+
+IMPORTANT:
+Courses without matching instructor records are still
+included, with a NULL value for INSTRUCTOR_EMAIL.
+
+FILTERING CONDITIONS:
+1. c.ROW_DELETED_TIME IS NULL
+   Excludes courses marked as deleted.
+
+2. c.AVAILABLE_IND = 1
+   Includes only courses marked as available.
+
+3. c.ENABLED_IND = 1
+   Includes only enabled courses.
+
+4. c.START_DATE IS NULL
+   OR c.START_DATE <= CURRENT_DATE()
+
+   Includes courses that:
+   - Have no defined start date.
+   - Started before today.
+   - Start today.
+
+   Excludes courses with future start dates.
+
+5. c.END_DATE IS NULL
+   OR c.END_DATE >= CURRENT_DATE()
+
+   Includes courses that:
+   - Have no defined end date.
+   - End today.
+   - End in the future.
+
+   Excludes courses whose end date has already passed.
+
+DATE LOGIC:
+The query uses the Snowflake CURRENT_DATE() function
+to identify courses within their scheduled date range.
+
+Courses qualify when:
+- Their start date is NULL or today/earlier.
+AND
+- Their end date is NULL or today/later.
+
+This means courses with no start date and no end date
+can be included if they meet the availability,
+enabled, and deletion conditions.
+
+SORTING:
+Results are ordered by:
+1. COURSE_NUMBER - Ascending.
+2. INSTRUCTOR_EMAIL - Ascending.
+
+MULTIPLE INSTRUCTORS:
+- A course with multiple instructor enrollment records
+  may produce multiple rows.
+- Each matching instructor record produces a row
+  containing the course information and email.
+- Courses without matching instructors produce a row
+  with a NULL instructor email.
+- Duplicate rows are not explicitly removed.
+
+IMPORTANT NOTES:
+- This query identifies courses that are available,
+  enabled, and within their scheduled date range.
+- It does not verify actual student access or activity.
+- It does not check AVAILABLE_TO_STUDENTS_IND.
+- It does not check instructor enrollment availability
+  or enabled status.
+- It does not check PERSON availability or enabled status.
+- START_TIME and END_TIME are not evaluated.
+- Courses starting or ending today are included
+  regardless of their specific start/end times.
+- No academic term or course naming filter is applied.
+- CURRENT_DATE() automatically adjusts as dates change.
+- The query does not require a course to have an instructor
+  in order to appear in the results.
+
+*/
+
+SELECT
+    c.COURSE_NUMBER AS COURSE_ID,
+    c.NAME AS COURSE_NAME,
+    p.EMAIL AS INSTRUCTOR_EMAIL,
+    c.START_DATE AS START_DATE,
+    c.END_DATE AS END_DATE
+
+FROM CDM_LMS.COURSE c
+
+LEFT JOIN CDM_LMS.PERSON_COURSE pc
+    ON c.ID = pc.COURSE_ID
+    AND pc.COURSE_ROLE = 'I'
+    AND pc.ROW_DELETED_TIME IS NULL
+
+LEFT JOIN CDM_LMS.PERSON p
+    ON pc.PERSON_ID = p.ID
+    AND p.ROW_DELETED_TIME IS NULL
+
+WHERE c.ROW_DELETED_TIME IS NULL
+    AND c.AVAILABLE_IND = 1
+    AND c.ENABLED_IND = 1
+    AND (
+        c.START_DATE IS NULL
+        OR c.START_DATE <= CURRENT_DATE()
+    )
+    AND (
+        c.END_DATE IS NULL
+        OR c.END_DATE >= CURRENT_DATE()
+    )
+
+ORDER BY
+    c.COURSE_NUMBER,
+    p.EMAIL;
