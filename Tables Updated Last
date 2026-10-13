@@ -1,0 +1,313 @@
+
+/*
+QUERY NAME: Blackboard Data - Illuminate Table Update Monitoring
+
+PURPOSE:
+Identifies the most recent row update timestamp across
+eight key Blackboard Data - Illuminate LMS tables.
+
+The query retrieves the latest ROW_UPDATED_TIME value
+from each table to help monitor when records were
+last updated in the Snowflake database.
+
+This report can be used to:
+- Monitor data freshness across LMS tables.
+- Identify tables with relatively recent updates.
+- Identify tables that may have outdated data.
+- Compare update timestamps across different tables.
+- Support troubleshooting of data synchronization
+  and reporting discrepancies.
+
+IMPORTANT:
+The query identifies the most recent recorded row update
+in each table. It does not establish when the table was
+last refreshed, loaded, or synchronized.
+
+------------------------------------------------------------
+DATA SOURCES
+------------------------------------------------------------
+
+The query examines eight CDM_LMS tables:
+
+1. CDM_LMS.PERSON
+   Contains Blackboard user information, including
+   student and instructor records.
+
+2. CDM_LMS.COURSE
+   Contains Blackboard course information,
+   identifiers, settings, and dates.
+
+3. CDM_LMS.PERSON_COURSE
+   Contains course enrollment records connecting
+   users to courses and their assigned roles.
+
+4. CDM_LMS.GRADE
+   Contains student grade records, including
+   scores and grading information.
+
+5. CDM_LMS.GRADEBOOK
+   Contains gradebook items, grading settings,
+   and final grade column information.
+
+6. CDM_LMS.COURSE_ITEM
+   Contains Blackboard course content items,
+   descriptions, and item types.
+
+7. CDM_LMS.EVALUATION
+   Contains evaluation records associated with
+   evaluable items and student assessments.
+
+8. CDM_LMS.ATTEMPT
+   Contains student assessment attempt records
+   and related grading information.
+
+All eight tables and their ROW_UPDATED_TIME fields
+are defined in the Blackboard Data - Illuminate schema.
+
+------------------------------------------------------------
+FIELDS RETURNED
+------------------------------------------------------------
+
+1. table_name
+   Identifies the CDM_LMS table being evaluated.
+
+   The table name is assigned as a fixed text value
+   in each SELECT statement.
+
+   Examples:
+   - PERSON
+   - COURSE
+   - PERSON_COURSE
+   - GRADE
+   - GRADEBOOK
+   - COURSE_ITEM
+   - EVALUATION
+   - ATTEMPT
+
+2. last_updated
+   Returns the most recent ROW_UPDATED_TIME
+   value found in the corresponding table.
+
+   The value is calculated using:
+
+   MAX(ROW_UPDATED_TIME)
+
+   MAX() identifies the latest non-NULL timestamp
+   stored in the column.
+
+------------------------------------------------------------
+ROW_UPDATED_TIME
+------------------------------------------------------------
+
+ROW_UPDATED_TIME is a timestamp field available
+in each of the eight CDM_LMS tables.
+
+The query uses this field to identify the
+most recent recorded row update.
+
+EXAMPLE:
+
+A table contains these timestamps:
+
+2026-10-10 08:15:00
+2026-10-11 14:30:00
+2026-10-13 09:45:00
+
+MAX(ROW_UPDATED_TIME) returns:
+
+2026-10-13 09:45:00
+
+IMPORTANT:
+- MAX() ignores NULL values.
+- If all ROW_UPDATED_TIME values are NULL,
+  the result is NULL.
+- If the table contains no records,
+  MAX() returns NULL.
+- This timestamp does not necessarily represent
+  the most recent data load into Snowflake.
+- The query does not check ROW_INSERTED_TIME.
+- The query does not check ROW_DELETED_TIME.
+
+------------------------------------------------------------
+UNION ALL OPERATION
+------------------------------------------------------------
+
+The query uses UNION ALL to combine the results
+from eight separate SELECT statements.
+
+Each SELECT returns:
+1. A fixed table name.
+2. The maximum ROW_UPDATED_TIME.
+
+UNION ALL combines these individual results
+into one result set.
+
+WHY UNION ALL IS USED:
+
+- Preserves the result from every SELECT.
+- Does not perform duplicate elimination.
+- Produces one result row for each table.
+- Allows multiple tables to be compared
+  in a single report.
+
+Unlike UNION, UNION ALL does not perform
+a duplicate-removal operation.
+
+------------------------------------------------------------
+TABLE RELATIONSHIPS
+------------------------------------------------------------
+
+No JOIN operations are used.
+
+Each table is evaluated independently.
+
+The query does not require relationships
+between the eight CDM_LMS tables because
+it only retrieves the maximum update timestamp
+from each table.
+
+------------------------------------------------------------
+FILTERING CONDITIONS
+------------------------------------------------------------
+
+No WHERE clause is used.
+
+Therefore:
+- All records in each table are considered.
+- Records marked as deleted are not excluded.
+- Available and unavailable records are included.
+- Enabled and disabled records are included.
+- No academic term restrictions are applied.
+- No course or user restrictions are applied.
+- No date-range restrictions are applied.
+
+IMPORTANT:
+The MAX(ROW_UPDATED_TIME) value may come
+from a record that is currently marked as deleted.
+
+------------------------------------------------------------
+SORTING
+------------------------------------------------------------
+
+ORDER BY last_updated DESC
+
+Sorts the results by the most recent
+ROW_UPDATED_TIME value.
+
+DESC:
+Displays the latest timestamps first.
+
+The table with the most recent row update
+appears at the top of the report.
+
+The table with the oldest maximum update
+timestamp appears toward the bottom.
+
+In Snowflake, NULL values appear last by default
+for descending sorts unless session settings
+specify otherwise.
+
+------------------------------------------------------------
+EXPECTED OUTPUT
+------------------------------------------------------------
+
+The query normally returns eight rows,
+one for each CDM_LMS table.
+
+Example:
+
+TABLE_NAME       LAST_UPDATED
+PERSON           2026-10-13 09:45:00
+COURSE           2026-10-13 09:40:00
+PERSON_COURSE    2026-10-13 09:35:00
+GRADE            2026-10-13 08:30:00
+GRADEBOOK        2026-10-12 17:15:00
+COURSE_ITEM      2026-10-12 16:20:00
+EVALUATION       2026-10-12 12:00:00
+ATTEMPT          2026-10-11 15:45:00
+
+These values are illustrative only.
+
+------------------------------------------------------------
+IMPORTANT NOTES
+------------------------------------------------------------
+
+- The query monitors row update timestamps
+  across eight Blackboard LMS tables.
+
+- Each table is evaluated independently.
+
+- The report returns one row per table.
+
+- The query does not count records.
+
+- The query does not measure the number
+  of updated or inserted records.
+
+- The query does not identify which specific
+  record was updated most recently.
+
+- The query does not verify whether scheduled
+  data refresh processes completed successfully.
+
+- A table with an older timestamp may simply
+  have had no recent record updates.
+
+- A recent ROW_UPDATED_TIME does not guarantee
+  that every record in the table is current.
+
+- Recently inserted records may not be reflected
+  by ROW_UPDATED_TIME if that field is NULL.
+
+- Deleted records are not excluded.
+
+- The query does not use CURRENT_DATE()
+  or CURRENT_TIMESTAMP().
+
+- The report shows recorded update timestamps,
+  not the elapsed time since those updates.
+
+- The results reflect timestamp values currently
+  stored in Blackboard Data - Illuminate.
+
+*/
+
+SELECT 'PERSON' AS table_name, MAX(ROW_UPDATED_TIME) AS last_updated
+FROM CDM_LMS.PERSON
+
+UNION ALL
+
+SELECT 'COURSE', MAX(ROW_UPDATED_TIME)
+FROM CDM_LMS.COURSE
+
+UNION ALL
+
+SELECT 'PERSON_COURSE', MAX(ROW_UPDATED_TIME)
+FROM CDM_LMS.PERSON_COURSE
+
+UNION ALL
+
+SELECT 'GRADE', MAX(ROW_UPDATED_TIME)
+FROM CDM_LMS.GRADE
+
+UNION ALL
+
+SELECT 'GRADEBOOK', MAX(ROW_UPDATED_TIME)
+FROM CDM_LMS.GRADEBOOK
+
+UNION ALL
+
+SELECT 'COURSE_ITEM', MAX(ROW_UPDATED_TIME)
+FROM CDM_LMS.COURSE_ITEM
+
+UNION ALL
+
+SELECT 'EVALUATION', MAX(ROW_UPDATED_TIME)
+FROM CDM_LMS.EVALUATION
+
+UNION ALL
+
+SELECT 'ATTEMPT', MAX(ROW_UPDATED_TIME)
+FROM CDM_LMS.ATTEMPT
+
+ORDER BY last_updated DESC;
