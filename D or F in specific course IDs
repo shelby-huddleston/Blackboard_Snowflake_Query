@@ -1,0 +1,369 @@
+
+/*
+QUERY NAME: Fall 2026 Psychology Students with D or F Final Grades
+
+PURPOSE:
+Identifies students enrolled in three specified Fall 2026
+Psychology courses who have a valid final grade below 70%.
+
+The query retrieves student names, student IDs, course
+numbers, final grade percentages, earned points, possible
+points, and calculated letter grades.
+
+The results can be used to identify students receiving
+D or F grades for academic performance reporting,
+student support, or intervention purposes.
+
+DATA SOURCES:
+
+1. CDM_LMS.COURSE (c)
+   Contains Blackboard Learn course information,
+   including course identifiers and course numbers.
+
+2. CDM_LMS.PERSON_COURSE (pc)
+   Connects students to courses and identifies
+   their enrollment roles and statuses.
+
+3. CDM_LMS.PERSON (p)
+   Contains student information, including names
+   and student identifiers stored in the STAGE field.
+
+4. CDM_LMS.GRADE (g)
+   Contains student grade information, including
+   normalized scores, earned points, possible points,
+   and grade modification timestamps.
+
+5. CDM_LMS.GRADEBOOK (gb)
+   Contains gradebook column information and identifies
+   columns designated as final grades.
+
+TABLE RELATIONSHIPS:
+
+1. PERSON_COURSE.COURSE_ID = COURSE.ID
+   Connects each student enrollment to its course.
+
+2. PERSON.ID = PERSON_COURSE.PERSON_ID
+   Connects enrollment records to student information.
+
+3. GRADE.PERSON_COURSE_ID = PERSON_COURSE.ID
+   Connects each student enrollment to grade records.
+
+4. GRADEBOOK.ID = GRADE.GRADEBOOK_ID
+   Connects grade records to their gradebook columns.
+
+All relationships use INNER JOIN.
+
+IMPORTANT:
+Students must have matching enrollment, person,
+grade, and qualifying gradebook records to appear
+in the results.
+
+FIELDS RETURNED:
+
+1. student_name
+   Combines PERSON.FIRST_NAME and PERSON.LAST_NAME
+   into a single student name.
+
+2. student_id
+   Extracts the student_id value from the JSON data
+   stored in PERSON.STAGE.
+
+   The ::string conversion returns the JSON value
+   as a Snowflake string.
+
+3. course_id
+   Returns the Blackboard course number.
+
+4. external_grade_percent
+   Converts GRADE.NORMALIZED_SCORE into a percentage.
+
+   Formula:
+   ROUND(g.normalized_score * 100, 2)
+
+   Example:
+   0.6543 becomes 65.43%
+
+5. external_grade_points_total
+   Returns GRADE.SCORE, representing the stored
+   earned score associated with the grade record.
+
+6. external_points_possible
+   Returns GRADE.POSSIBLE_SCORE, representing
+   the stored possible score for that grade record.
+
+7. letter_grade
+   Uses a CASE statement to classify the
+   normalized final grade.
+
+   Grade Classification:
+   - Below 60%       = F
+   - 60% to below 70% = D
+
+   The WHERE clause excludes grades of 70%
+   or higher, so only D and F classifications
+   are returned for qualifying scores.
+
+COURSE FILTERING:
+
+The query is restricted to these three courses:
+
+- PSY_6721_OL_01_2026_FA
+- PSY_6721_OL_02_2026_FA
+- PSY_6721_OL_03_2026_FA
+
+Only courses whose COURSE_NUMBER exactly matches
+one of these values are considered.
+
+STUDENT ENROLLMENT FILTERS:
+
+1. pc.course_role = 'S'
+   Includes only enrollments assigned the
+   Blackboard Student role.
+
+2. pc.available_ind = 1
+   Includes only available enrollment records.
+
+3. pc.enabled_ind = 1
+   Includes only enabled enrollment records.
+
+4. pc.row_deleted_time IS NULL
+   Excludes enrollments marked as deleted.
+
+PERSON RECORD FILTERS:
+
+1. p.available_ind = 1
+   Includes only available person records.
+
+2. p.enabled_ind = 1
+   Includes only enabled person records.
+
+3. p.row_deleted_time IS NULL
+   Excludes person records marked as deleted.
+
+FINAL GRADE IDENTIFICATION:
+
+1. gb.final_grade_ind = 1
+   Includes grades associated with gradebook
+   columns designated as final grades.
+
+2. gb.deleted_ind = 0
+   Excludes gradebook columns marked as deleted
+   by the DELETED_IND indicator.
+
+3. g.normalized_score IS NOT NULL
+   Excludes grades without a normalized score.
+
+4. g.valid_ind = 1
+   Includes only grade records marked as valid.
+
+5. g.row_deleted_time IS NULL
+   Excludes grade records marked as deleted.
+
+NOTE:
+The query does not explicitly filter
+GRADEBOOK.ROW_DELETED_TIME.
+
+D OR F GRADE FILTER:
+
+g.normalized_score < 0.70
+
+Includes students with final grade values below 70%.
+
+Examples:
+- 0.5900 = 59.00% = F
+- 0.6000 = 60.00% = D
+- 0.6950 = 69.50% = D
+
+Excludes grades of exactly 70% or higher.
+
+IMPORTANT:
+Filtering uses the original normalized score,
+not the rounded displayed percentage.
+
+For example, a normalized score of 0.69999
+passes the filter even though the displayed
+percentage rounds to 70.00%.
+
+DUPLICATE HANDLING:
+
+The QUALIFY clause uses:
+
+ROW_NUMBER() OVER (
+    PARTITION BY c.id, p.id
+    ORDER BY
+        g.modified_time DESC NULLS LAST,
+        g.last_graded_time DESC NULLS LAST,
+        g.id DESC
+) = 1
+
+This ensures that only one qualifying grade
+record is returned per student per course.
+
+PARTITION BY:
+- c.id : Internal course identifier.
+- p.id : Internal student identifier.
+
+Each student/course combination is evaluated
+independently.
+
+GRADE RECORD PRIORITIZATION:
+
+1. g.modified_time DESC NULLS LAST
+   Prioritizes the most recently modified
+   qualifying grade record.
+
+2. g.last_graded_time DESC NULLS LAST
+   Uses the most recent grading timestamp
+   when modification times are equal.
+
+3. g.id DESC
+   Uses the highest grade record identifier
+   as a final tie-breaker.
+
+QUALIFY:
+Retains only the record assigned ROW_NUMBER() = 1.
+
+IMPORTANT:
+The query selects the most recent grade record
+among those already meeting the D/F criteria.
+
+It does not first select each student's latest
+final grade and then determine whether that
+latest grade is a D or F.
+
+If multiple final gradebook columns exist,
+the query may evaluate grades from multiple
+columns before selecting one.
+
+SORTING:
+
+Results are ordered by:
+
+1. c.course_number
+   Groups students by course number.
+
+2. external_grade_percent
+   Sorts grades from lowest to highest,
+   showing the lowest grades first.
+
+3. p.last_name
+   Sorts students alphabetically by last name
+   when their grade percentages are equal.
+
+4. p.first_name
+   Sorts by first name when the preceding
+   sorting values are equal.
+
+IMPORTANT NOTES:
+
+- Only the three specified Psychology courses
+  are included.
+
+- Only available and enabled student enrollment
+  and person records are included.
+
+- Only valid grades from gradebook columns
+  designated as final grades are evaluated.
+
+- Grades are classified using the normalized
+  score stored in CDM_LMS.GRADE.
+
+- Students with no qualifying grade record
+  are excluded.
+
+- Students with grades of 70% or higher
+  are excluded.
+
+- Student IDs are extracted from the
+  PERSON.STAGE JSON field.
+
+- The query does not check COURSE availability,
+  enabled status, or deletion status.
+
+- The query does not check GRADEBOOK.ROW_DELETED_TIME.
+
+- No course start date, end date, or academic
+  term table filtering is performed.
+
+- The query does not use the current date.
+
+- Letter grades are calculated using the
+  specified thresholds rather than a stored
+  letter-grade value.
+
+- The results reflect grades available in
+  Blackboard Data - Illuminate at query time.
+
+*/
+
+SELECT
+    CONCAT(p.first_name, ' ', p.last_name) AS student_name,
+    p.stage:student_id::string AS student_id,
+    c.course_number AS course_id,
+
+    ROUND(g.normalized_score * 100, 2) AS external_grade_percent,
+    g.score AS external_grade_points_total,
+    g.possible_score AS external_points_possible,
+
+    CASE
+        WHEN g.normalized_score < 0.60 THEN 'F'
+        WHEN g.normalized_score < 0.70 THEN 'D'
+    END AS letter_grade
+
+FROM CDM_LMS.COURSE c
+
+INNER JOIN CDM_LMS.PERSON_COURSE pc
+    ON pc.course_id = c.id
+
+INNER JOIN CDM_LMS.PERSON p
+    ON p.id = pc.person_id
+
+INNER JOIN CDM_LMS.GRADE g
+    ON g.person_course_id = pc.id
+
+INNER JOIN CDM_LMS.GRADEBOOK gb
+    ON gb.id = g.gradebook_id
+    AND gb.final_grade_ind = 1
+    AND gb.deleted_ind = 0
+
+WHERE
+    c.course_number IN (
+        'PSY_6721_OL_01_2026_FA',
+        'PSY_6721_OL_02_2026_FA',
+        'PSY_6721_OL_03_2026_FA'
+    )
+
+    -- Students only
+    AND pc.course_role = 'S'
+
+    -- Active enrollments only
+    AND pc.available_ind = 1
+    AND pc.enabled_ind = 1
+    AND pc.row_deleted_time IS NULL
+
+    -- Active person record
+    AND p.available_ind = 1
+    AND p.enabled_ind = 1
+    AND p.row_deleted_time IS NULL
+
+    -- Valid external/final grade
+    AND g.normalized_score IS NOT NULL
+    AND g.valid_ind = 1
+    AND g.row_deleted_time IS NULL
+
+    -- D or F students only
+    AND g.normalized_score < 0.70
+
+QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY c.id, p.id
+    ORDER BY
+        g.modified_time DESC NULLS LAST,
+        g.last_graded_time DESC NULLS LAST,
+        g.id DESC
+) = 1
+
+ORDER BY
+    c.course_number,
+    external_grade_percent,
+    p.last_name,
+    p.first_name;
