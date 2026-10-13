@@ -1,0 +1,436 @@
+
+/*
+QUERY NAME: EMS 5681–5684 Gradebook Items and Final Grades
+            for 2023 and 2024 Courses
+
+PURPOSE:
+Retrieves Blackboard Learn gradebook information for
+EMS 5681, EMS 5682, EMS 5683, and EMS 5684 courses
+whose course identifiers contain 2023 or 2024.
+
+The query identifies all qualifying gradebook items,
+including those designated as External/Final Grades.
+
+It provides information about gradebook item names,
+descriptions, possible points, due dates, visibility,
+grade calculation settings, grade release status,
+and creation/modification dates.
+
+This report can be used to review and compare gradebook
+configurations across the selected EMS courses.
+
+DATA SOURCES:
+
+1. CDM_LMS.COURSE (c)
+   Contains Blackboard course information, including
+   course identifiers, course names, course numbers,
+   and STAGE JSON data.
+
+2. CDM_LMS.GRADEBOOK (gb)
+   Contains course gradebook items, assessment settings,
+   possible scores, due dates, visibility indicators,
+   and final grade identification.
+
+TABLE RELATIONSHIP:
+
+GRADEBOOK.COURSE_ID = COURSE.ID
+
+An INNER JOIN connects each gradebook item to its
+corresponding Blackboard course.
+
+IMPORTANT:
+- Only courses with matching gradebook records
+  are included.
+- A course can have multiple gradebook items.
+- Each qualifying gradebook item produces a
+  separate result row.
+- Courses with no qualifying gradebook items
+  do not appear in the results.
+
+------------------------------------------------------------
+FIELDS RETURNED
+------------------------------------------------------------
+
+COURSE INFORMATION:
+
+1. course_surrogate_id
+   Internal unique course identifier from COURSE.ID.
+
+2. course_number
+   Course number stored in CDM_LMS.COURSE.
+
+3. blackboard_course_id
+   Extracts batch_uid from the COURSE.STAGE JSON field.
+
+   c.stage:batch_uid::string
+
+   The ::string conversion returns the JSON value
+   as a text string.
+
+   This field may contain NULL when batch_uid
+   is not present in the STAGE data.
+
+4. course_name
+   Blackboard course name.
+
+GRADEBOOK INFORMATION:
+
+5. gradebook_id
+   Internal unique identifier for the gradebook item.
+
+6. gradebook_source_id
+   Source system identifier for the gradebook item.
+
+7. gradebook_item_name
+   Name of the gradebook column or item.
+
+8. gradebook_item_description
+   Description associated with the gradebook item.
+
+9. gradebook_type
+   Gradebook item type stored in Blackboard Data.
+
+10. possible_score
+    Maximum possible points associated with the
+    gradebook item.
+
+11. due_time
+    Scheduled due date/time for the gradebook item,
+    when defined.
+
+12. visible_ind
+    Indicates the gradebook item's visibility
+    according to the stored indicator.
+
+13. used_in_calculations_ind
+    Indicates whether the gradebook item is marked
+    for use in grade calculations.
+
+14. grades_released_ind
+    Indicates whether grades are marked as released.
+
+15. final_grade_ind
+    Identifies gradebook columns designated as
+    final grade columns.
+
+    A value of 1 indicates a final grade designation.
+
+GRADEBOOK ITEM CLASSIFICATION:
+
+16. gradebook_item_type
+
+    Uses a CASE statement to identify whether
+    each gradebook item is designated as a final
+    grade column.
+
+    CASE
+        WHEN gb.final_grade_ind = 1
+            THEN 'EXTERNAL / FINAL GRADE'
+        ELSE 'GRADEBOOK ITEM'
+    END
+
+    Classification:
+
+    final_grade_ind = 1:
+        EXTERNAL / FINAL GRADE
+
+    All other values:
+        GRADEBOOK ITEM
+
+    IMPORTANT:
+    This classification is based entirely on
+    GRADEBOOK.FINAL_GRADE_IND.
+
+    It does not independently verify Blackboard's
+    External Grade designation or grading policy.
+
+GRADEBOOK TIMESTAMPS:
+
+17. created_time
+    Date/time when the gradebook item was created.
+
+18. modified_time
+    Date/time when the gradebook item was last modified,
+    as recorded in Blackboard Data.
+
+------------------------------------------------------------
+FILTERING CONDITIONS
+------------------------------------------------------------
+
+1. gb.deleted_ind = 0
+
+   Excludes gradebook items marked as deleted
+   using the DELETED_IND indicator.
+
+2. gb.row_deleted_time IS NULL
+
+   Excludes gradebook records with a populated
+   deletion timestamp.
+
+3. c.row_deleted_time IS NULL
+
+   Excludes courses marked as deleted.
+
+IMPORTANT:
+The query applies deletion filtering to both
+the course and gradebook records.
+
+However, it does not check whether the courses
+are currently available or enabled.
+
+------------------------------------------------------------
+EMS COURSE FILTER
+------------------------------------------------------------
+
+The query searches for course identifiers containing:
+
+- EMS_5681
+- EMS_5682
+- EMS_5683
+- EMS_5684
+
+It uses:
+
+COALESCE(c.stage:batch_uid::string, c.course_number)
+
+This expression selects:
+
+1. The COURSE.STAGE batch_uid when it is not NULL.
+2. The COURSE.COURSE_NUMBER when batch_uid is NULL.
+
+IMPORTANT:
+COALESCE does not search both fields independently.
+
+If batch_uid contains a non-NULL value, course_number
+is not evaluated as an alternative for matching.
+
+UPPER():
+Converts the selected identifier to uppercase.
+
+LIKE:
+Searches the uppercase identifier for the
+specified EMS course patterns.
+
+The percent signs (%) allow additional characters
+before and after the matching pattern.
+
+IMPORTANT:
+In SQL LIKE patterns, underscores (_) are
+single-character wildcards.
+
+For example, EMS_5681 can match EMS_5681,
+but it can also match EMS-5681.
+
+The current query does not require literal
+underscore characters.
+
+------------------------------------------------------------
+ACADEMIC YEAR FILTER
+------------------------------------------------------------
+
+The query restricts results to course identifiers
+containing either:
+
+- 2023
+- 2024
+
+It uses:
+
+COALESCE(c.stage:batch_uid::string, c.course_number)
+
+The same identifier selection rules apply:
+
+- Use batch_uid if available.
+- Otherwise use course_number.
+
+LIKE '%2023%':
+Matches identifiers containing 2023 anywhere.
+
+LIKE '%2024%':
+Matches identifiers containing 2024 anywhere.
+
+IMPORTANT:
+The filter searches identifier text.
+
+It does not use:
+- COURSE.START_DATE
+- COURSE.END_DATE
+- COURSE.TERM_ID
+- CDM_LMS.TERM
+
+Therefore, 2023 and 2024 refer to text found
+in the selected course identifier rather than
+verified academic years.
+
+------------------------------------------------------------
+COMBINED FILTERING LOGIC
+------------------------------------------------------------
+
+To appear in the results, a record must meet
+all of the following conditions:
+
+1. The course is not marked as deleted.
+
+2. The gradebook item is not marked as deleted.
+
+3. The selected course identifier contains
+   one of the four EMS course patterns.
+
+4. The selected course identifier contains
+   either 2023 or 2024.
+
+5. The course has at least one matching
+   gradebook item.
+
+The EMS filters are combined using OR.
+
+The year filters are also combined using OR.
+
+The two groups are connected using AND.
+
+Therefore, a course must match both:
+- One requested EMS course pattern.
+- One requested year pattern.
+
+------------------------------------------------------------
+GRADEBOOK ITEMS INCLUDED
+------------------------------------------------------------
+
+The query does not restrict results exclusively
+to final grade columns.
+
+It includes all qualifying gradebook items where
+the deletion filters are satisfied.
+
+These may include:
+- Assignment gradebook columns.
+- Test or quiz gradebook columns.
+- Manually created gradebook columns.
+- Calculated gradebook columns.
+- Columns designated as final grades.
+
+The specific records returned depend on the
+gradebook configuration of each course.
+
+The GRADEBOOK_ITEM_TYPE output makes it easier
+to distinguish designated final grade columns
+from other gradebook items.
+
+------------------------------------------------------------
+SORTING
+------------------------------------------------------------
+
+Results are ordered by:
+
+1. c.course_number
+   Groups records by Blackboard course number
+   in ascending order.
+
+2. gb.final_grade_ind DESC
+   Displays rows with higher FINAL_GRADE_IND values
+   first within each course.
+
+   Normally, items designated as final grades
+   will appear before standard gradebook items.
+
+3. gb.name
+   Sorts gradebook item names alphabetically
+   within the preceding groups.
+
+------------------------------------------------------------
+IMPORTANT NOTES
+------------------------------------------------------------
+
+- The query searches four EMS course patterns
+  across identifiers containing 2023 or 2024.
+
+- The report returns gradebook configuration
+  information rather than individual student grades.
+
+- No CDM_LMS.GRADE records are retrieved.
+
+- No student names, student IDs, or earned student
+  scores are included.
+
+- A course may appear multiple times because
+  each gradebook item produces a separate row.
+
+- Final grade columns are identified using
+  GRADEBOOK.FINAL_GRADE_IND = 1.
+
+- The query includes regular gradebook columns
+  as well as designated final grade columns.
+
+- Course availability and enabled status
+  are not evaluated.
+
+- Gradebook visibility and release indicators
+  are returned but are not used as filters.
+
+- No date restrictions are applied to gradebook
+  creation, modification, or due dates.
+
+- The year filter searches course identifiers
+  rather than official academic term dates.
+
+- The query does not use CURRENT_DATE().
+
+- Results reflect gradebook records available
+  in Blackboard Data - Illuminate at query time.
+
+*/
+
+SELECT
+    c.id AS course_surrogate_id,
+    c.course_number,
+    c.stage:batch_uid::string AS blackboard_course_id,
+    c.name AS course_name,
+
+    gb.id AS gradebook_id,
+    gb.source_id AS gradebook_source_id,
+    gb.name AS gradebook_item_name,
+    gb.description AS gradebook_item_description,
+    gb.gradebook_type,
+    gb.possible_score,
+    gb.due_time,
+    gb.visible_ind,
+    gb.used_in_calculations_ind,
+    gb.grades_released_ind,
+    gb.final_grade_ind,
+
+    CASE
+        WHEN gb.final_grade_ind = 1 THEN 'EXTERNAL / FINAL GRADE'
+        ELSE 'GRADEBOOK ITEM'
+    END AS gradebook_item_type,
+
+    gb.created_time,
+    gb.modified_time
+
+FROM CDM_LMS.COURSE c
+
+INNER JOIN CDM_LMS.GRADEBOOK gb
+    ON gb.course_id = c.id
+
+WHERE
+    gb.deleted_ind = 0
+    AND gb.row_deleted_time IS NULL
+    AND c.row_deleted_time IS NULL
+
+    -- EMS courses requested
+    AND (
+        UPPER(COALESCE(c.stage:batch_uid::string, c.course_number)) LIKE '%EMS_5681%'
+        OR UPPER(COALESCE(c.stage:batch_uid::string, c.course_number)) LIKE '%EMS_5682%'
+        OR UPPER(COALESCE(c.stage:batch_uid::string, c.course_number)) LIKE '%EMS_5683%'
+        OR UPPER(COALESCE(c.stage:batch_uid::string, c.course_number)) LIKE '%EMS_5684%'
+    )
+
+    -- Only course IDs containing 2023 or 2024
+    AND (
+        COALESCE(c.stage:batch_uid::string, c.course_number) LIKE '%2023%'
+        OR COALESCE(c.stage:batch_uid::string, c.course_number) LIKE '%2024%'
+    )
+
+ORDER BY
+    c.course_number,
+    gb.final_grade_ind DESC,
+    gb.name;
