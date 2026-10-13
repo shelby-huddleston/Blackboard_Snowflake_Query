@@ -1,0 +1,73 @@
+
+/*
+QUERY NAME: Fall 2026 Course Identification
+
+PURPOSE:
+Retrieves Blackboard Learn courses whose course numbers
+contain the pattern '2026_FA' and have not been marked
+as deleted.
+
+DATA SOURCE:
+CDM_LMS.COURSE
+Contains course information from Blackboard Data - Illuminate.
+
+FIELDS RETURNED:
+- course_id     : Unique internal course identifier (COURSE.ID).
+- course_number : Course number assigned to the course
+                  in Blackboard Learn.
+
+FILTERING CONDITIONS:
+1. course_number ILIKE '%2026_FA%'
+   Includes courses whose course numbers match the
+   specified pattern, regardless of capitalization.
+
+   - ILIKE performs a case-insensitive pattern match.
+   - % allows any number of characters before or after
+     the specified pattern.
+   - The underscore (_) in SQL LIKE/ILIKE is a wildcard
+     matching exactly one character, not a literal
+     underscore.
+
+   IMPORTANT:
+   The pattern '2026_FA' will match course numbers such as:
+   - 2026_FA_BIOL101
+   - ABC_2026_FA_MATH101
+   - 2026-FA-ENG101
+
+   To match a literal underscore between 2026 and FA,
+   use an escaped underscore in the search pattern.
+
+2. row_deleted_time IS NULL
+   Excludes courses that have been marked as deleted
+   in Blackboard Data - Illuminate.
+
+SORTING:
+- No ORDER BY clause is specified.
+- Results are not guaranteed to appear in any
+  particular order.
+
+IMPORTANT NOTES:
+- The query identifies courses using their course number,
+  not an academic term relationship or date range.
+- The pattern '2026_FA' is assumed to represent Fall 2026
+  based on the course naming convention.
+- The query does not verify course availability or
+  enabled status.
+- Both active and inactive courses may be returned,
+  provided they have not been marked as deleted.
+- No course start date or end date restrictions apply.
+- The course_id alias represents the internal COURSE.ID,
+  not the Blackboard course number.
+- Results may change as course records are added,
+  updated, or marked as deleted.
+
+*/
+
+SELECT 
+    c.id AS course_id,
+    c.course_number
+FROM 
+    CDM_LMS.COURSE c
+WHERE 
+    c.course_number ILIKE '%2026_FA%'
+    AND c.row_deleted_time IS NULL;
