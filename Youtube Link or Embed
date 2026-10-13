@@ -1,0 +1,231 @@
+
+/*
+QUERY NAME: Fall 2026 YouTube Video Links in Course Content
+
+PURPOSE:
+Identifies and extracts YouTube video URLs found within
+Blackboard Learn course item descriptions for courses
+matching the Fall 2026 naming convention.
+
+The query searches course content for YouTube links,
+identifies whether each URL is an embedded video or
+a standard YouTube link, and returns the course and
+content item associated with each URL.
+
+DATA SOURCES:
+1. CDM_LMS.COURSE
+   Contains Blackboard course information, including
+   course names, course numbers, and identifiers.
+
+2. CDM_LMS.COURSE_ITEM
+   Contains course content items and their descriptions,
+   which may include YouTube hyperlinks or embed codes.
+
+TABLE RELATIONSHIP:
+- COURSE_ITEM.COURSE_ID = COURSE.ID
+- An INNER JOIN connects each content item to its course.
+- Only course items belonging to matching courses
+  are included.
+
+COMMON TABLE EXPRESSION (CTE):
+youtube_items
+
+The CTE identifies course content containing YouTube
+URLs and extracts those URLs into individual records.
+
+FIELDS EXTRACTED IN THE CTE:
+- course_key           : Internal COURSE.ID identifier.
+- course_id            : Course batch_uid from COURSE.STAGE.
+- course_number        : Blackboard course number.
+- course_name          : Blackboard course name.
+- course_item_id       : Unique content item identifier.
+- course_item_name     : Name of the content item.
+- item_type            : Content item type.
+- item_type_source_code: Original LMS item type code.
+- description          : Content item description.
+- raw_youtube_url      : YouTube URL extracted from the
+                         description before cleanup.
+
+YOUTUBE URL EXTRACTION:
+The query uses three Snowflake functions:
+
+1. COALESCE(ci.description, '')
+   Replaces NULL descriptions with an empty string
+   so the regular expression can process them.
+
+2. REGEXP_SUBSTR_ALL()
+   Searches the description and returns an array
+   containing all matching YouTube URLs.
+
+   Supported URL patterns include:
+   - youtube.com/watch?v=
+   - youtube.com/embed/
+   - youtube.com/shorts/
+   - youtu.be/
+
+   The expression also supports:
+   - http:// and https:// URLs
+   - Protocol-relative URLs beginning with //
+   - URLs containing the www. prefix
+
+3. LATERAL FLATTEN()
+   Expands the array of YouTube URLs into separate rows.
+
+   Each matching URL becomes its own result row.
+
+   For example:
+   - One content item with one YouTube URL produces one row.
+   - One content item with three YouTube URLs produces
+     three rows.
+   - Content items without matching URLs are excluded.
+
+FILTERING CONDITIONS:
+1. c.stage:batch_uid::string ILIKE '%2026_FA'
+   Limits results to courses whose batch_uid ends
+   with a value matching the specified Fall 2026 pattern.
+
+   - The batch_uid is extracted from the COURSE.STAGE
+     JSON field.
+   - ::string converts the JSON value into text.
+   - ILIKE performs case-insensitive matching.
+   - % allows any characters before the pattern.
+   - The underscore (_) is a single-character wildcard
+     in Snowflake SQL, not a literal underscore.
+
+   IMPORTANT:
+   Unlike ILIKE '%2026_FA%', this pattern requires the
+   matching value to appear at the END of the batch_uid.
+
+2. c.row_deleted_time IS NULL
+   Excludes courses marked as deleted.
+
+3. ci.row_deleted_time IS NULL
+   Excludes course content items marked as deleted.
+
+FINAL SELECT:
+Returns course information, content item information,
+a YouTube URL classification, and a cleaned URL.
+
+YOUTUBE TYPE CLASSIFICATION:
+The CASE statement categorizes each extracted URL.
+
+- Embedded YouTube Video:
+  URLs containing youtube.com/embed/
+
+- YouTube Link:
+  All other matching YouTube URLs, including watch links,
+  Shorts links, and youtu.be links.
+
+IMPORTANT:
+The classification identifies the URL format.
+It does not verify whether a video is actually displayed
+as an embedded player in Blackboard.
+
+YOUTUBE URL CLEANUP:
+The REPLACE() expression standardizes extracted URLs.
+
+1. If a URL begins with //
+   The query adds https: to create a complete URL.
+
+   Example:
+   //www.youtube.com/embed/abc123
+
+   Becomes:
+   https://www.youtube.com/embed/abc123
+
+2. Converts HTML-encoded ampersands:
+   &amp; becomes &
+
+   This helps restore YouTube URLs containing multiple
+   query-string parameters.
+
+SORTING:
+Results are ordered by:
+1. course_id        - Course batch UID, ascending.
+2. course_item_name - Content item name, ascending.
+3. youtube_url      - Extracted URL, ascending.
+
+IMPORTANT NOTES:
+- Only URLs found in COURSE_ITEM.DESCRIPTION are searched.
+- YouTube URLs stored in other fields are not included.
+- A content item can produce multiple rows when multiple
+  YouTube URLs are present.
+- Duplicate occurrences of the same URL are not removed.
+- The query does not check whether courses or content
+  items are available or enabled.
+- The query does not verify whether a YouTube video
+  is accessible, public, private, or deleted.
+- The course_id output represents the batch_uid extracted
+  from COURSE.STAGE, not COURSE.ID.
+- The query uses the batch_uid naming convention to
+  identify Fall 2026 courses rather than the TERM table.
+- The regular expression may capture trailing URL
+  punctuation or HTML entities beyond &amp;.
+- Results represent discovered YouTube URL references,
+  not video views, clicks, or student engagement.
+
+*/
+
+WITH youtube_items AS (
+    SELECT
+        c.id AS course_key,
+        c.stage:batch_uid::string AS course_id,
+        c.course_number,
+        c.name AS course_name,
+
+        ci.id AS course_item_id,
+        ci.name AS course_item_name,
+        ci.item_type,
+        ci.item_type_source_code,
+        ci.description,
+
+        f.value::string AS raw_youtube_url
+
+    FROM CDM_LMS.COURSE c
+
+    INNER JOIN CDM_LMS.COURSE_ITEM ci
+        ON ci.course_id = c.id
+
+    , LATERAL FLATTEN(
+        INPUT => REGEXP_SUBSTR_ALL(
+            COALESCE(ci.description, ''),
+            '(https?:)?//(www\\.)?(youtube\\.com/(watch\\?v=|embed/|shorts/)|youtu\\.be/)[^"''< >]+'
+        )
+    ) f
+
+    WHERE c.stage:batch_uid::string ILIKE '%2026_FA'
+      AND c.row_deleted_time IS NULL
+      AND ci.row_deleted_time IS NULL
+)
+
+SELECT
+    course_id,
+    course_number,
+    course_name,
+    course_item_id,
+    course_item_name,
+    item_type,
+    item_type_source_code,
+
+    CASE
+        WHEN LOWER(raw_youtube_url) LIKE '%youtube.com/embed/%'
+            THEN 'Embedded YouTube Video'
+        ELSE 'YouTube Link'
+    END AS youtube_type,
+
+    REPLACE(
+        CASE
+            WHEN raw_youtube_url LIKE '//%'
+                THEN 'https:' || raw_youtube_url
+            ELSE raw_youtube_url
+        END,
+        '&amp;',
+        '&'
+    ) AS youtube_url
+
+FROM youtube_items
+
+ORDER BY
+    course_id,
+    course_item_name,
+    youtube_url;
