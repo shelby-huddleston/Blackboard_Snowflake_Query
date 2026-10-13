@@ -1,0 +1,77 @@
+
+/*
+QUERY NAME: Available Courses with Current or Future End Dates
+
+PURPOSE:
+Retrieves a list of Blackboard Learn courses that are currently
+available, enabled, and have not yet reached their end date.
+
+DATA SOURCE:
+CDM_LMS.COURSE
+Contains course information from Blackboard Data - Illuminate.
+
+FIELDS RETURNED:
+- course_surr_key : Unique internal course identifier (COURSE.ID).
+- course_id       : Course number used to identify the course.
+- course_name     : Name of the course in Blackboard.
+- end_date        : Scheduled course end date.
+- end_time        : Scheduled course end time.
+
+FILTERING CONDITIONS:
+1. row_deleted_time IS NULL
+   Excludes courses that have been marked as deleted.
+
+2. available_ind = 1
+   Includes only courses marked as available in Blackboard.
+
+3. enabled_ind = 1
+   Includes only courses that are enabled.
+
+4. end_date IS NULL OR end_date >= CURRENT_DATE()
+   Includes courses that:
+   - Have no defined end date (NULL).
+   - Have an end date of today.
+   - Have an end date in the future.
+   Excludes courses with end dates before today.
+
+SORTING:
+- First sorts by end_date in ascending order.
+- Then sorts by course_number in ascending order.
+- In Snowflake, NULL end dates appear last by default
+  for ascending sorts, unless NULL ordering is configured
+  differently for the session.
+
+IMPORTANT NOTES:
+- The query uses the Snowflake CURRENT_DATE() function,
+  so results automatically adjust based on the current date.
+- Courses without an end date are included even if they
+  were created several years ago.
+- The end_time field is displayed but is not used to
+  determine whether a course has ended.
+- A course ending today is included regardless of its
+  end_time value.
+- Course availability does not necessarily mean the course
+  is visible to students. The AVAILABLE_TO_STUDENTS_IND
+  field is not evaluated in this query.
+- No filtering is performed on course start dates or terms.
+
+*/
+
+SELECT
+    c.id AS course_surr_key,
+    c.course_number AS course_id,
+    c.name AS course_name,
+    c.end_date,
+    c.end_time
+FROM CDM_LMS.COURSE c
+WHERE
+    c.row_deleted_time IS NULL
+    AND c.available_ind = 1
+    AND c.enabled_ind = 1
+    AND (
+        c.end_date IS NULL
+        OR c.end_date >= CURRENT_DATE()
+    )
+ORDER BY
+    c.end_date,
+    c.course_number;
