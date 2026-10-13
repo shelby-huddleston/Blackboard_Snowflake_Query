@@ -1,0 +1,494 @@
+
+/*
+QUERY NAME: Fall 2026 AI Conversation Faculty Adoption by Course
+
+PURPOSE:
+Identifies Blackboard Learn courses in the Fall 2026 term
+that contain AI Conversation assessments.
+
+The query counts the number of distinct AI Conversation
+assessment records associated with each course and returns
+the course ID, course name, term, and assigned instructors.
+
+Results are organized by course ID, with courses having
+the highest AI Conversation counts listed first.
+
+This report can be used to evaluate faculty adoption of
+Blackboard's AI Conversation feature across Fall 2026 courses.
+
+DATA SOURCES:
+
+1. LEARN.QTI_ASI_DATA (q)
+   Referenced to identify AI Conversation assessment
+   records and count distinct assessment identifiers.
+
+   NOTE:
+   This table and its fields are not included in the
+   supplied valid_fields.pdf schema documentation.
+   Its structure and the meaning of the filtering
+   values require confirmation against the LEARN schema.
+
+2. CDM_LMS.COURSE (c)
+   Contains Blackboard course information, including
+   course numbers, course names, term identifiers,
+   and source identifiers.
+
+3. CDM_LMS.TERM (t)
+   Contains academic term information, including
+   the term name.
+
+4. CDM_LMS.PERSON_COURSE (pc)
+   Connects users to courses and identifies their
+   assigned course roles.
+
+5. CDM_LMS.PERSON (p)
+   Contains faculty names and Blackboard usernames
+   stored in the STAGE JSON field.
+
+TABLE RELATIONSHIPS:
+
+1. COURSE.TERM_ID = TERM.ID
+   Associates each course with its academic term.
+
+2. PERSON_COURSE.COURSE_ID = COURSE.ID
+   Associates instructor enrollments with courses.
+
+3. PERSON_COURSE.PERSON_ID = PERSON.ID
+   Connects instructor enrollments to person records.
+
+4. AI_COUNTS.COURSE_SOURCE_ID =
+   TRY_TO_NUMBER(COURSE.SOURCE_ID)
+
+   Attempts to match AI Conversation assessment
+   records to Blackboard courses using their
+   source identifiers.
+
+   IMPORTANT:
+   This relationship cannot be validated using
+   the supplied schema documentation because
+   LEARN.QTI_ASI_DATA is not documented there.
+
+------------------------------------------------------------
+CTE 1: ai_counts
+------------------------------------------------------------
+
+PURPOSE:
+Counts distinct AI Conversation assessment records
+for each course source identifier.
+
+SOURCE:
+LEARN.QTI_ASI_DATA
+
+COURSE IDENTIFICATION:
+
+q.CRSMAIN_PK1 AS COURSE_SOURCE_ID
+
+Uses the assessment record's CRSMAIN_PK1 value
+to group assessments by course source identifier.
+
+AI CONVERSATION COUNT:
+
+COUNT(DISTINCT q.PK1) AS AI_COUNT
+
+Counts distinct assessment record identifiers
+within each course source identifier.
+
+DISTINCT prevents duplicate occurrences of the
+same PK1 from increasing the count.
+
+FILTERING CONDITIONS:
+
+1. q.BBMD_ASSESSMENT_SUBTYPE = 'AiConversation'
+
+   Restricts results to records whose assessment
+   subtype is identified as AiConversation.
+
+2. q.BBMD_ASI_TYPE = 1
+
+   Restricts results to assessment records with
+   BBMD_ASI_TYPE equal to 1.
+
+   The precise business meaning of this value
+   requires confirmation from LEARN documentation.
+
+3. q.ROW_DELETED_TIME IS NULL
+
+   Excludes assessment records marked as deleted,
+   assuming this field follows the documented
+   CDM deletion timestamp convention.
+
+GROUP BY:
+
+q.CRSMAIN_PK1
+
+Produces one aggregate record per course
+source identifier.
+
+EXAMPLE:
+
+Course A:
+- AI Conversation assessment 1
+- AI Conversation assessment 2
+- AI Conversation assessment 3
+
+AI_COUNT = 3
+
+IMPORTANT:
+This is a count of distinct matching assessment
+records, not a count of:
+- Faculty members using AI Conversation.
+- Student interactions with AI Conversation.
+- AI Conversation attempts or submissions.
+- Student participation.
+- Time spent using AI Conversation.
+
+------------------------------------------------------------
+CTE 2: instructors
+------------------------------------------------------------
+
+PURPOSE:
+Retrieves faculty assigned the Instructor role
+in each course and combines their names and
+Blackboard usernames into comma-separated fields.
+
+SOURCE TABLES:
+CDM_LMS.PERSON_COURSE
+CDM_LMS.PERSON
+
+INSTRUCTOR IDENTIFICATION:
+
+pc.COURSE_ROLE = 'I'
+
+Includes course enrollment records with the
+Blackboard Instructor role.
+
+pc.ROW_DELETED_TIME IS NULL
+
+Excludes instructor enrollment records that
+have been marked as deleted.
+
+INSTRUCTOR NAME:
+
+CONCAT(p.FIRST_NAME, ' ', p.LAST_NAME)
+
+Combines each instructor's first and last name
+into a single display name.
+
+INSTRUCTOR_NAMES:
+
+LISTAGG(DISTINCT ... , ', ')
+
+Combines distinct instructor names into one
+comma-separated field per course.
+
+Example:
+Jane Smith, Michael Jones
+
+INSTRUCTOR_USERIDS:
+
+p.STAGE:user_id::string
+
+Extracts the Blackboard username from the
+PERSON.STAGE JSON field.
+
+LISTAGG combines distinct usernames into one
+comma-separated field per course.
+
+Example:
+jsmith, mjones
+
+WITHIN GROUP:
+Sorts instructor names and usernames alphabetically
+within their respective aggregated fields.
+
+GROUP BY pc.COURSE_ID:
+Produces one instructor summary per course.
+
+IMPORTANT:
+- Multiple instructors appear in one row.
+- Repeated identical names or usernames are removed.
+- Names and usernames are aggregated separately.
+- Positions in the two lists are not guaranteed
+  to represent corresponding faculty members.
+- PERSON deletion, availability, and enabled
+  status are not checked.
+- Instructor enrollment availability and enabled
+  status are not checked.
+- Primary instructor status is not evaluated.
+
+------------------------------------------------------------
+MAIN QUERY
+------------------------------------------------------------
+
+PURPOSE:
+Combines course, term, AI Conversation count,
+and instructor information into a course-level report.
+
+COURSE AND TERM JOIN:
+
+INNER JOIN CDM_LMS.TERM t
+    ON t.ID = c.TERM_ID
+
+Requires each returned course to have a matching
+term record.
+
+AI CONVERSATION JOIN:
+
+INNER JOIN ai_counts a
+    ON a.COURSE_SOURCE_ID =
+       TRY_TO_NUMBER(c.SOURCE_ID)
+
+Requires each returned course to have matching
+AI Conversation assessment records.
+
+TRY_TO_NUMBER:
+Attempts to convert COURSE.SOURCE_ID to a number.
+
+If SOURCE_ID cannot be converted to a numeric value,
+TRY_TO_NUMBER returns NULL.
+
+Those courses will not match a numeric source identifier
+through this join.
+
+IMPORTANT:
+Because this is an INNER JOIN, courses with no
+matching AI Conversation records are excluded.
+
+Courses with zero AI Conversations do not appear
+in the report.
+
+INSTRUCTOR JOIN:
+
+LEFT JOIN instructors i
+    ON i.COURSE_ID = c.ID
+
+Adds instructor information when matching
+instructor enrollments are available.
+
+Courses without matching instructors remain
+in the report, with NULL instructor fields.
+
+------------------------------------------------------------
+FIELDS RETURNED
+------------------------------------------------------------
+
+1. COURSE_ID
+   Blackboard course number from COURSE.COURSE_NUMBER.
+
+2. COURSE_NAME
+   Blackboard course name.
+
+3. TERM_NAME
+   Academic term name from CDM_LMS.TERM.
+
+4. INSTRUCTOR_NAMES
+   Comma-separated list of instructor names.
+
+5. INSTRUCTOR_USERIDS
+   Comma-separated list of Blackboard instructor
+   usernames extracted from PERSON.STAGE.
+
+6. AI_CONVERSATION_COUNT
+   Number of distinct matching AI Conversation
+   assessment records associated with the course.
+
+------------------------------------------------------------
+COURSE FILTERING CONDITIONS
+------------------------------------------------------------
+
+1. c.ROW_DELETED_TIME IS NULL
+
+   Excludes courses marked as deleted.
+
+2. c.COURSE_NUMBER NOT ILIKE 'TEST%'
+
+   Excludes courses whose course number begins
+   with TEST, regardless of capitalization.
+
+   Examples excluded:
+   - TEST_2026_FA
+   - TestCourse101
+   - testing_course
+
+   Course numbers that are NULL are also excluded
+   because the comparison does not evaluate to TRUE.
+
+3. t.NAME = 'Fall 2026 (All Courses)'
+
+   Restricts results to courses associated with
+   the academic term having this exact name.
+
+   IMPORTANT:
+   This filter uses the TERM table rather than
+   searching for '2026_FA' in the course number.
+
+   The term name must match the specified value.
+
+------------------------------------------------------------
+COURSE-LEVEL COUNTING
+------------------------------------------------------------
+
+The AI Conversation count is calculated separately
+for each course source identifier.
+
+The result is then connected to the corresponding
+course record in CDM_LMS.COURSE.
+
+Example:
+
+COURSE_ID                 AI_CONVERSATION_COUNT
+PSY_6721_OL_01_2026_FA    5
+PSY_6721_OL_02_2026_FA    3
+PSY_6721_OL_03_2026_FA    1
+
+Each returned course displays its matching count.
+
+IMPORTANT:
+The count does not indicate how many different
+faculty members created the assessments.
+
+A course with five AI Conversations and two
+instructors will display:
+- AI_CONVERSATION_COUNT = 5
+- Both instructor names in INSTRUCTOR_NAMES
+
+The count remains associated with the course,
+not with each individual instructor.
+
+------------------------------------------------------------
+SORTING
+------------------------------------------------------------
+
+Results are ordered by:
+
+1. a.AI_COUNT DESC
+   Displays courses with the highest AI Conversation
+   counts first.
+
+2. c.COURSE_NUMBER
+   Sorts courses alphabetically by course number
+   when counts are equal.
+
+------------------------------------------------------------
+IMPORTANT NOTES
+------------------------------------------------------------
+
+- The report focuses on Fall 2026 courses.
+
+- Only courses with matching AI Conversation
+  assessment records are returned.
+
+- Courses with zero matching AI Conversations
+  are excluded.
+
+- AI_CONVERSATION_COUNT is calculated using
+  COUNT(DISTINCT q.PK1).
+
+- Faculty names and usernames are combined
+  into comma-separated fields.
+
+- Faculty adoption is inferred from AI Conversation
+  assessments existing in courses with instructor
+  enrollments, not from verified creator activity.
+
+- The query does not identify who created
+  each AI Conversation assessment.
+
+- The query does not measure student participation
+  or engagement with AI Conversations.
+
+- The query does not check COURSE.AVAILABLE_IND
+  or COURSE.ENABLED_IND.
+
+- The query does not filter deleted or disabled
+  PERSON records.
+
+- The query relies on the relationship between
+  LEARN.QTI_ASI_DATA.CRSMAIN_PK1 and
+  CDM_LMS.COURSE.SOURCE_ID.
+
+- This LEARN relationship and its assessment-type
+  fields must be validated against documentation
+  outside the supplied CDM schema files.
+
+- No date-range filter is applied to the
+  assessment records themselves.
+
+- The query reports counts by matched course
+  record, not a unique count by instructor.
+
+*/
+
+-- Fall 2026 AI Conversation Faculty Adoption
+
+WITH ai_counts AS (
+    SELECT
+        q.CRSMAIN_PK1 AS COURSE_SOURCE_ID,
+        COUNT(DISTINCT q.PK1) AS AI_COUNT
+    FROM LEARN.QTI_ASI_DATA q
+    WHERE q.BBMD_ASSESSMENT_SUBTYPE = 'AiConversation'
+      AND q.BBMD_ASI_TYPE = 1
+      AND q.ROW_DELETED_TIME IS NULL
+    GROUP BY q.CRSMAIN_PK1
+),
+
+instructors AS (
+    SELECT
+        pc.COURSE_ID,
+
+        LISTAGG(
+            DISTINCT CONCAT(
+                p.FIRST_NAME, ' ', p.LAST_NAME
+            ),
+            ', '
+        ) WITHIN GROUP (
+            ORDER BY CONCAT(
+                p.FIRST_NAME, ' ', p.LAST_NAME
+            )
+        ) AS INSTRUCTOR_NAMES,
+
+        LISTAGG(
+            DISTINCT p.STAGE:user_id::string,
+            ', '
+        ) WITHIN GROUP (
+            ORDER BY p.STAGE:user_id::string
+        ) AS INSTRUCTOR_USERIDS
+
+    FROM CDM_LMS.PERSON_COURSE pc
+
+    INNER JOIN CDM_LMS.PERSON p
+        ON p.ID = pc.PERSON_ID
+
+    WHERE pc.COURSE_ROLE = 'I'
+      AND pc.ROW_DELETED_TIME IS NULL
+
+    GROUP BY pc.COURSE_ID
+)
+
+SELECT
+    c.COURSE_NUMBER AS COURSE_ID,
+    c.NAME AS COURSE_NAME,
+    t.NAME AS TERM_NAME,
+    i.INSTRUCTOR_NAMES,
+    i.INSTRUCTOR_USERIDS,
+    a.AI_COUNT AS AI_CONVERSATION_COUNT
+
+FROM CDM_LMS.COURSE c
+
+INNER JOIN CDM_LMS.TERM t
+    ON t.ID = c.TERM_ID
+
+INNER JOIN ai_counts a
+    ON a.COURSE_SOURCE_ID =
+        TRY_TO_NUMBER(c.SOURCE_ID)
+
+LEFT JOIN instructors i
+    ON i.COURSE_ID = c.ID
+
+WHERE c.ROW_DELETED_TIME IS NULL
+  AND c.COURSE_NUMBER NOT ILIKE 'TEST%'
+  AND t.NAME = 'Fall 2026 (All Courses)'
+
+ORDER BY
+    a.AI_COUNT DESC,
+    c.COURSE_NUMBER;
