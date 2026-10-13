@@ -1,0 +1,16 @@
+SELECT 
+  c.id AS child_course_id,
+  c.course_parent_id AS parent_course_id,
+  c.course_number,
+  t.name AS term_name
+FROM 
+  CDM_LMS.COURSE c
+INNER JOIN 
+  CDM_LMS.TERM t 
+  ON c.term_id = t.id
+WHERE 
+  c.course_parent_id IS NOT NULL
+  AND t.name = 'Fall 2026 (All Courses)'
+  AND c.row_deleted_time IS NULL
+ORDER BY 
+  c.course_parent_id, c.id;
