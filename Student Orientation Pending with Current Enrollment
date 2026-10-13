@@ -1,0 +1,575 @@
+
+/*
+QUERY NAME: Fall 2026 Students with Orientation Pending Roles
+
+PURPOSE:
+Identifies Blackboard Learn users enrolled in Fall 2026
+courses whose enrollment role description is
+"Student Orientation Pending".
+
+The query retrieves student identifiers, usernames,
+contact information, enrollment role details, and
+course information.
+
+It excludes deleted records, course numbers associated
+with current child course records, and courses containing
+the literal identifiers _WC_ or _OC_.
+
+This report can be used to identify students who remain
+assigned the Student Orientation Pending course role
+within the selected Fall 2026 courses.
+
+DATA SOURCES:
+
+1. CDM_LMS.PERSON_COURSE (pc)
+   Contains user-to-course enrollment records,
+   assigned course roles, and role descriptions.
+
+2. CDM_LMS.PERSON (p)
+   Contains user information, including first name,
+   last name, email address, and STAGE JSON data.
+
+3. CDM_LMS.COURSE (c)
+   Contains Blackboard course information, including
+   course numbers, course names, dates, identifiers,
+   and parent course relationships.
+
+TABLE RELATIONSHIPS:
+
+1. PERSON_COURSE.PERSON_ID = PERSON.ID
+
+   Connects each enrollment record to its
+   associated person record.
+
+2. PERSON_COURSE.COURSE_ID = COURSE.ID
+
+   Connects each enrollment record to its
+   associated Blackboard course.
+
+Both relationships use INNER JOIN.
+
+IMPORTANT:
+Only enrollment records with matching PERSON
+and COURSE records are included.
+
+------------------------------------------------------------
+FIELDS RETURNED
+------------------------------------------------------------
+
+STUDENT INFORMATION:
+
+1. student_id
+   Extracts the student_id value from PERSON.STAGE.
+
+   p.stage:student_id::string
+
+   The ::string conversion extracts the JSON value
+   as a text string.
+
+   If student_id does not exist in the STAGE object,
+   the returned value is NULL.
+
+2. user_id
+   Extracts the Blackboard username from PERSON.STAGE.
+
+   p.stage:user_id::string
+
+   This represents the username stored in the
+   Blackboard Data STAGE JSON field.
+
+3. first_name
+   Student's first name from PERSON.FIRST_NAME.
+
+4. last_name
+   Student's last name from PERSON.LAST_NAME.
+
+5. email
+   Email address from PERSON.EMAIL.
+
+ENROLLMENT ROLE INFORMATION:
+
+6. course_role
+   Canonical course role assigned to the enrollment.
+
+7. course_role_source_code
+   Original source-system course role code.
+
+8. course_role_source_desc
+   Source-system description of the course role.
+
+9. course_role_desc
+   Additional course role description associated
+   with the enrollment record.
+
+   IMPORTANT:
+   The query retains all four role fields to help
+   identify how the enrollment is represented
+   in Blackboard Data.
+
+COURSE INFORMATION:
+
+10. course_number
+    Blackboard course number.
+
+11. course_name
+    Name of the Blackboard course.
+
+12. course_start_date
+    Scheduled start date of the course.
+
+13. course_end_date
+    Scheduled end date of the course.
+
+    IMPORTANT:
+    Course dates are returned for informational
+    purposes only.
+
+    They are not used to filter the results.
+
+------------------------------------------------------------
+DISTINCT RECORD HANDLING
+------------------------------------------------------------
+
+SELECT DISTINCT
+
+Removes duplicate rows when every selected
+output field contains the same value.
+
+IMPORTANT:
+DISTINCT does not guarantee one row per student.
+
+A student enrolled in multiple qualifying courses
+will appear once for each distinct course record.
+
+Different enrollment role details or course
+information can also produce separate rows.
+
+------------------------------------------------------------
+STUDENT ORIENTATION PENDING FILTER
+------------------------------------------------------------
+
+The query searches two enrollment role descriptions:
+
+1. pc.course_role_desc
+
+2. pc.course_role_source_desc
+
+The filter is:
+
+UPPER(TRIM(pc.course_role_desc))
+    = 'STUDENT ORIENTATION PENDING'
+
+OR
+
+UPPER(TRIM(pc.course_role_source_desc))
+    = 'STUDENT ORIENTATION PENDING'
+
+TRIM():
+Removes leading and trailing spaces from
+the role description.
+
+UPPER():
+Converts the description to uppercase.
+
+This makes the comparison insensitive to
+capitalization differences and surrounding spaces.
+
+Examples that match:
+
+- Student Orientation Pending
+- STUDENT ORIENTATION PENDING
+- student orientation pending
+-  Student Orientation Pending
+
+IMPORTANT:
+Only one of the two role descriptions
+must match for the enrollment to qualify.
+
+The query does not require:
+
+pc.course_role = 'S'
+
+Therefore, enrollment records are selected
+based on their role description rather than
+the canonical Student role code.
+
+The query also does not verify whether a
+student has completed an orientation process.
+
+It identifies enrollment records with the
+specified role description.
+
+------------------------------------------------------------
+FALL 2026 COURSE FILTER
+------------------------------------------------------------
+
+UPPER(TRIM(c.course_number)) LIKE '%2026_FA'
+
+Restricts results to course numbers ending
+with a pattern matching 2026_FA.
+
+UPPER():
+Converts the course number to uppercase.
+
+TRIM():
+Removes leading and trailing spaces.
+
+LIKE:
+Performs a pattern match against the
+course number.
+
+The percent sign (%) allows any number
+of characters before the specified pattern.
+
+IMPORTANT:
+The underscore (_) is a single-character
+wildcard in SQL LIKE patterns.
+
+Therefore, the current expression does not
+require a literal underscore between
+2026 and FA.
+
+The pattern must match at the END of the
+trimmed course number.
+
+Examples that match:
+
+- PSY_101_2026_FA
+- ENG_201_2026_FA
+- BIO_101_2026-FA
+
+Examples that do not match:
+
+- PSY_101_2026_SP
+- ENG_201_2025_FA
+- BIO_101_2026_FA_ARCHIVE
+
+IMPORTANT:
+This filter uses the course number,
+not the CDM_LMS.TERM table.
+
+The query assumes that the course naming
+convention identifies Fall 2026 courses.
+
+------------------------------------------------------------
+CURRENT RECORD FILTERING
+------------------------------------------------------------
+
+The query excludes records marked as deleted.
+
+1. pc.row_deleted_time IS NULL
+
+   Includes enrollment records without
+   a deletion timestamp.
+
+2. p.row_deleted_time IS NULL
+
+   Includes person records without
+   a deletion timestamp.
+
+3. c.row_deleted_time IS NULL
+
+   Includes course records without
+   a deletion timestamp.
+
+IMPORTANT:
+These filters identify records not marked
+as deleted in Blackboard Data.
+
+They do not independently establish that
+the enrollment, person, or course is active.
+
+The query does not check:
+
+- pc.available_ind
+- pc.enabled_ind
+- p.available_ind
+- p.enabled_ind
+- c.available_ind
+- c.enabled_ind
+
+------------------------------------------------------------
+PARENT / CHILD COURSE EXCLUSION
+------------------------------------------------------------
+
+The query uses a correlated NOT EXISTS subquery:
+
+AND NOT EXISTS (
+    SELECT 1
+    FROM CDM_LMS.COURSE child
+    WHERE child.instance_id = c.instance_id
+      AND UPPER(TRIM(child.course_number))
+          = UPPER(TRIM(c.course_number))
+      AND child.course_parent_id IS NOT NULL
+      AND child.row_deleted_time IS NULL
+)
+
+PURPOSE:
+Excludes a course record if another current
+COURSE record in the same Blackboard instance,
+with the same normalized course number,
+is identified as a child course.
+
+This helps remove course numbers associated
+with child course records.
+
+CONDITION 1:
+
+child.instance_id = c.instance_id
+
+Limits the subquery to course records
+belonging to the same Blackboard instance.
+
+CONDITION 2:
+
+UPPER(TRIM(child.course_number))
+    = UPPER(TRIM(c.course_number))
+
+Matches course numbers after:
+- Removing leading/trailing spaces.
+- Converting text to uppercase.
+
+CONDITION 3:
+
+child.course_parent_id IS NOT NULL
+
+Identifies a course record whose
+COURSE_PARENT_ID is populated.
+
+This indicates a child-to-parent
+course relationship in the COURSE table.
+
+CONDITION 4:
+
+child.row_deleted_time IS NULL
+
+Only considers child course records
+that have not been marked as deleted.
+
+NOT EXISTS:
+
+If at least one matching child record
+is found, the outer course record
+is excluded from the results.
+
+IMPORTANT:
+This exclusion operates on the course number
+within the same Blackboard instance.
+
+It is not limited to checking whether
+the current course record itself has
+COURSE_PARENT_ID populated.
+
+If another undeleted record shares the
+same course number and is marked as a child,
+all qualifying outer records with that
+course number in the same instance are excluded.
+
+------------------------------------------------------------
+EXCLUDE COURSES CONTAINING _WC_
+------------------------------------------------------------
+
+POSITION('_WC_' IN UPPER(TRIM(c.course_number))) = 0
+
+Searches the normalized course number for
+the literal text:
+
+_WC_
+
+POSITION():
+Returns the starting character position
+when the text is found.
+
+Returns 0 when the text is not found.
+
+Therefore:
+
+- Position greater than 0 = Excluded.
+- Position equal to 0 = Included.
+
+IMPORTANT:
+Unlike LIKE, POSITION treats underscores
+as literal characters rather than wildcards.
+
+The query does not define what WC represents.
+It excludes the literal naming pattern.
+
+------------------------------------------------------------
+EXCLUDE COURSES CONTAINING _OC_
+------------------------------------------------------------
+
+POSITION('_OC_' IN UPPER(TRIM(c.course_number))) = 0
+
+Excludes course numbers containing the
+literal text:
+
+_OC_
+
+The same POSITION logic applies.
+
+Examples:
+
+PSY_101_WC_2026_FA -> Excluded
+ENG_201_OC_2026_FA -> Excluded
+BIO_101_2026_FA    -> Not excluded by these filters
+
+IMPORTANT:
+Both exclusion conditions must be satisfied.
+
+A course number containing either _WC_
+or _OC_ is excluded.
+
+These conditions inspect the course number
+only, not the course name or other fields.
+
+------------------------------------------------------------
+COMBINED FILTERING LOGIC
+------------------------------------------------------------
+
+To appear in the results, a record must:
+
+1. Have an enrollment role description matching
+   Student Orientation Pending in at least
+   one of the two role description fields.
+
+2. Have a course number matching the
+   Fall 2026 ending pattern.
+
+3. Have enrollment, person, and course records
+   that are not marked as deleted.
+
+4. Have no matching undeleted child course record
+   sharing its course number and Blackboard instance.
+
+5. Have a course number that does not contain
+   the literal _WC_ text.
+
+6. Have a course number that does not contain
+   the literal _OC_ text.
+
+All applicable conditions must be satisfied
+for a record to appear in the results.
+
+------------------------------------------------------------
+SORTING
+------------------------------------------------------------
+
+Results are ordered by:
+
+1. p.last_name
+   Sorts alphabetically by last name.
+
+2. p.first_name
+   Sorts alphabetically by first name when
+   last names are identical.
+
+3. c.course_number
+   Sorts by course number when both student
+   name values are identical.
+
+The default sort direction is ascending.
+
+------------------------------------------------------------
+IMPORTANT NOTES
+------------------------------------------------------------
+
+- The report identifies enrollments assigned
+  the Student Orientation Pending role description.
+
+- It does not confirm whether students have
+  completed or failed to complete orientation.
+
+- It searches Fall 2026 courses using a
+  course-number pattern, not the TERM table.
+
+- Course start and end dates are displayed
+  but do not affect inclusion.
+
+- Deleted enrollment, person, and course
+  records are excluded.
+
+- Availability and enabled indicators
+  are not evaluated.
+
+- SELECT DISTINCT removes duplicate output
+  rows but does not guarantee one row per student.
+
+- The NOT EXISTS subquery excludes course numbers
+  associated with undeleted child course records
+  within the same Blackboard instance.
+
+- Courses containing _WC_ or _OC_ are excluded
+  using literal substring searches.
+
+- Student IDs and Blackboard usernames are
+  extracted from PERSON.STAGE JSON data.
+
+- The query does not use CURRENT_DATE().
+
+- Results reflect the enrollment role values
+  stored in Blackboard Data - Illuminate
+  at the time the query is executed.
+
+*/
+
+SELECT DISTINCT
+    p.stage:student_id::string AS student_id,
+    p.stage:user_id::string    AS user_id,
+    p.first_name,
+    p.last_name,
+    p.email,
+
+    pc.course_role,
+    pc.course_role_source_code,
+    pc.course_role_source_desc,
+    pc.course_role_desc,
+
+    c.course_number,
+    c.name                     AS course_name,
+    c.start_date               AS course_start_date,
+    c.end_date                 AS course_end_date
+
+FROM CDM_LMS.PERSON_COURSE pc
+
+INNER JOIN CDM_LMS.PERSON p
+    ON p.id = pc.person_id
+
+INNER JOIN CDM_LMS.COURSE c
+    ON c.id = pc.course_id
+
+WHERE
+    (
+        UPPER(TRIM(pc.course_role_desc)) = 'STUDENT ORIENTATION PENDING'
+        OR
+        UPPER(TRIM(pc.course_role_source_desc)) = 'STUDENT ORIENTATION PENDING'
+    )
+
+    AND UPPER(TRIM(c.course_number)) LIKE '%2026_FA'
+
+    -- Current enrollment/course/person records
+    AND pc.row_deleted_time IS NULL
+    AND p.row_deleted_time IS NULL
+    AND c.row_deleted_time IS NULL
+
+    -- Exclude a course number if ANY current COURSE record
+    -- for that course number identifies it as a child
+    AND NOT EXISTS (
+        SELECT 1
+        FROM CDM_LMS.COURSE child
+        WHERE child.instance_id = c.instance_id
+          AND UPPER(TRIM(child.course_number))
+              = UPPER(TRIM(c.course_number))
+          AND child.course_parent_id IS NOT NULL
+          AND child.row_deleted_time IS NULL
+    )
+
+    -- Exclude courses containing literal _WC_
+    AND POSITION('_WC_' IN UPPER(TRIM(c.course_number))) = 0
+
+    -- Exclude courses containing literal _OC_
+    AND POSITION('_OC_' IN UPPER(TRIM(c.course_number))) = 0
+
+ORDER BY
+    p.last_name,
+    p.first_name,
+    c.course_number;
