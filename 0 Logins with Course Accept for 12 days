@@ -1,0 +1,415 @@
+-- Original name: Zero Login w/final assessment 03/2026
+
+/*
+===============================================================================
+SUMMARY
+===============================================================================
+
+Purpose:
+    Returns student activity for active Fall 2026 courses and includes:
+
+    1. Final Assessment Score
+       - Comes specifically from the assessment named "Final Assessment"
+       - Retrieved from an NCO5102 course
+       - Matched back to the student by Student_ID
+
+    2. Course Acceptance Acknowledgement Score
+       - Comes specifically from the gradebook item named
+         "Course Acceptance Acknowledgement"
+       - Retrieved from the exact Learn Course ID displayed on each row
+       - Matched using the student's PERSON_COURSE.ID for that course
+
+Course Filters:
+    - COURSE_NUMBER matches '%_2026_FA'
+    - Course has a START_DATE
+    - Course is available
+    - Course is available to students
+    - Course started between today and 12 days ago
+    - Deleted courses are excluded
+    - Child courses are excluded with COURSE_PARENT_ID IS NULL
+
+Student Filters:
+    - COURSE_ROLE = 'S'
+    - Enrollment is available
+    - Deleted enrollments are excluded
+    - PreviewUser accounts are excluded using PERSON.STAGE:user_id
+
+Student Activity:
+    - Counts COURSE_ACTIVITY records
+    - Returns most recent course access
+    - Calculates total course activity hours
+
+===============================================================================
+*/
+
+WITH courses AS
+(
+    SELECT
+        c.id AS Course_Surr_Key,
+        c.source_id AS Course_PK1,
+        c.course_number AS Learn_Course_ID,
+        c.name AS Course_Name,
+        c.start_date AS Course_Start,
+        c.end_date AS Course_End,
+        c.available_ind,
+        c.available_to_students_ind
+
+    FROM CDM_LMS.COURSE c
+
+    WHERE c.row_deleted_time IS NULL
+
+      -- Exclude child courses
+      AND c.course_parent_id IS NULL
+
+      AND c.start_date IS NOT NULL
+      AND c.available_ind = 'Y'
+      AND c.available_to_students_ind = 'Y'
+
+      -- Fall 2026 courses
+      AND c.course_number LIKE '%_2026_FA'
+      AND c.course_number LIKE '%_OL_%'
+
+      -- Course started between today and 12 days ago
+      AND DATEDIFF(
+            DAY,
+            TO_DATE(c.start_date),
+            CURRENT_DATE()
+          ) BETWEEN 0 AND 12
+),
+
+/*
+===============================================================================
+STUDENT ENROLLMENT
+===============================================================================
+*/
+enrollment AS
+(
+    SELECT
+        pc.id AS Student_Course_Enrollment_ID,
+
+        p.id AS Student_Surr_Key,
+        p.stage:student_id::STRING AS Student_ID,
+        p.last_name AS Student_Last_Name,
+        p.first_name AS Student_First_Name,
+        p.email AS Student_Email,
+
+        c.Course_Surr_Key,
+        c.Course_PK1,
+        c.Learn_Course_ID,
+        c.Course_Name,
+        c.Course_Start
+
+    FROM courses c
+
+    JOIN CDM_LMS.PERSON_COURSE pc
+        ON pc.course_id = c.Course_Surr_Key
+       AND pc.course_role = 'S'
+       AND pc.available_ind = 'Y'
+       AND pc.row_deleted_time IS NULL
+
+    JOIN CDM_LMS.PERSON p
+        ON p.id = pc.person_id
+
+       -- Exclude Blackboard PreviewUser accounts
+       AND COALESCE(
+            p.stage:user_id::STRING,
+            ''
+           ) NOT ILIKE '%PreviewUser%'
+),
+
+/*
+===============================================================================
+STUDENT COURSE ACTIVITY
+===============================================================================
+*/
+student_course_activity AS
+(
+    SELECT
+        e.Student_Course_Enrollment_ID,
+        e.Student_Surr_Key,
+        e.Student_ID,
+        e.Student_Last_Name,
+        e.Student_First_Name,
+        e.Student_Email,
+
+        e.Course_Surr_Key,
+        e.Learn_Course_ID,
+        e.Course_Name,
+        e.Course_Start,
+
+        COUNT(ca.id) AS Student_Login_Count,
+
+        DATE_TRUNC(
+            'minute',
+            MAX(ca.last_accessed_time)
+        ) AS Student_Last_Access,
+
+        ROUND(
+            SUM(ca.duration_sum / 3600),
+            2
+        ) AS Student_Course_Activity_Hours
+
+    FROM enrollment e
+
+    LEFT JOIN CDM_LMS.COURSE_ACTIVITY ca
+        ON ca.person_id = e.Student_Surr_Key
+       AND ca.course_id = e.Course_Surr_Key
+
+    GROUP BY
+        e.Student_Course_Enrollment_ID,
+        e.Student_Surr_Key,
+        e.Student_ID,
+        e.Student_Last_Name,
+        e.Student_First_Name,
+        e.Student_Email,
+        e.Course_Surr_Key,
+        e.Learn_Course_ID,
+        e.Course_Name,
+        e.Course_Start
+),
+
+/*
+===============================================================================
+NCO5102 COURSE
+===============================================================================
+
+Find the parent NCO5102 course used for the Final Assessment score.
+===============================================================================
+*/
+nco5102_course AS
+(
+    SELECT
+        crs.id AS course_id,
+        crs.course_number
+
+    FROM CDM_LMS.COURSE crs
+
+    WHERE crs.course_number LIKE '%NCO5102%'
+      AND crs.row_deleted_time IS NULL
+
+      -- Exclude child courses
+      AND crs.course_parent_id IS NULL
+),
+
+/*
+===============================================================================
+NCO5102 - FINAL ASSESSMENT GRADEBOOK ITEM
+===============================================================================
+
+Select ONLY the gradebook item named "Final Assessment".
+===============================================================================
+*/
+final_assessment_gradebook AS
+(
+    SELECT
+        gbk.id AS gradebook_id,
+        gbk.course_id,
+        gbk.name AS assessment_name,
+        gbk.possible_score
+
+    FROM CDM_LMS.GRADEBOOK gbk
+
+    JOIN nco5102_course c
+        ON c.course_id = gbk.course_id
+
+    WHERE gbk.row_deleted_time IS NULL
+      AND gbk.deleted_ind = FALSE
+
+      -- Only the assessment named Final Assessment
+      AND TRIM(gbk.name) ILIKE 'Final Assessment'
+),
+
+/*
+===============================================================================
+NCO5102 STUDENT ROSTER
+===============================================================================
+*/
+nco5102_roster AS
+(
+    SELECT
+        pcr.id AS person_course_id,
+        pcr.course_id,
+
+        per.stage:student_id::STRING AS student_id
+
+    FROM CDM_LMS.PERSON_COURSE pcr
+
+    JOIN CDM_LMS.PERSON per
+        ON per.id = pcr.person_id
+
+       -- Exclude Blackboard PreviewUser accounts
+       AND COALESCE(
+            per.stage:user_id::STRING,
+            ''
+           ) NOT ILIKE '%PreviewUser%'
+
+    JOIN nco5102_course c
+        ON c.course_id = pcr.course_id
+
+    WHERE pcr.row_deleted_time IS NULL
+      AND pcr.enabled_ind = TRUE
+      AND pcr.course_role = 'S'
+),
+
+/*
+===============================================================================
+NCO5102 FINAL ASSESSMENT GRADES
+===============================================================================
+*/
+final_assessment_grades AS
+(
+    SELECT
+        grd.gradebook_id,
+        grd.person_course_id,
+        grd.score
+
+    FROM CDM_LMS.GRADE grd
+
+    WHERE grd.row_deleted_time IS NULL
+),
+
+/*
+===============================================================================
+NCO5102 FINAL ASSESSMENT SCORE BY STUDENT
+===============================================================================
+
+This score follows the student rather than the course displayed on the
+report row.
+===============================================================================
+*/
+final_scores AS
+(
+    SELECT
+        r.student_id,
+        gr.score AS Final_Assessment_Score
+
+    FROM final_assessment_gradebook fag
+
+    JOIN nco5102_roster r
+        ON r.course_id = fag.course_id
+
+    LEFT JOIN final_assessment_grades gr
+        ON gr.gradebook_id = fag.gradebook_id
+       AND gr.person_course_id = r.person_course_id
+),
+
+/*
+===============================================================================
+COURSE ACCEPTANCE ACKNOWLEDGEMENT GRADEBOOK ITEM
+===============================================================================
+
+IMPORTANT:
+    The actual Blackboard gradebook item name confirmed from your data is:
+
+        Course Acceptance Acknowledgement
+
+    This lookup is performed against the EXACT course displayed on the
+    student's report row.
+===============================================================================
+*/
+course_acceptance_gradebook AS
+(
+    SELECT
+        gbk.id AS gradebook_id,
+        gbk.course_id,
+        gbk.name AS assessment_name,
+        gbk.possible_score
+
+    FROM CDM_LMS.GRADEBOOK gbk
+
+    JOIN courses c
+        ON c.Course_Surr_Key = gbk.course_id
+
+    WHERE gbk.row_deleted_time IS NULL
+      AND gbk.deleted_ind = FALSE
+
+      -- Exact Blackboard gradebook item
+      AND TRIM(gbk.name) ILIKE
+          'Course Acceptance Acknowledgement'
+),
+
+/*
+===============================================================================
+COURSE ACCEPTANCE ACKNOWLEDGEMENT SCORE
+===============================================================================
+
+Match the grade using BOTH:
+
+    1. The gradebook item from the exact course
+    2. The student's PERSON_COURSE.ID for that exact course
+===============================================================================
+*/
+course_acceptance_scores AS
+(
+    SELECT
+        e.Student_Course_Enrollment_ID,
+        e.Course_Surr_Key,
+
+        grd.score AS Course_Acceptance_Acknowledgement_Score
+
+    FROM enrollment e
+
+    JOIN course_acceptance_gradebook cag
+        ON cag.course_id = e.Course_Surr_Key
+
+    LEFT JOIN CDM_LMS.GRADE grd
+        ON grd.gradebook_id = cag.gradebook_id
+       AND grd.person_course_id =
+           e.Student_Course_Enrollment_ID
+       AND grd.row_deleted_time IS NULL
+)
+
+/*
+===============================================================================
+FINAL RESULTS
+===============================================================================
+*/
+SELECT
+    sca.Student_ID,
+    sca.Student_Last_Name,
+    sca.Student_First_Name,
+    sca.Student_Email,
+
+    sca.Course_Start,
+    sca.Learn_Course_ID,
+    sca.Course_Name,
+
+    sca.Student_Login_Count,
+    sca.Student_Last_Access,
+    sca.Student_Course_Activity_Hours,
+
+    -- Score from "Final Assessment" in NCO5102
+    fs.Final_Assessment_Score,
+
+    -- Score from "Course Acceptance Acknowledgement"
+    -- in the Learn course displayed on this row
+    cas.Course_Acceptance_Acknowledgement_Score
+
+FROM student_course_activity sca
+
+/*
+------------------------------------------------------------------------------
+NCO5102 Final Assessment:
+Match by Student_ID so the NCO5102 score can appear on the student's
+other Fall 2026 course rows.
+------------------------------------------------------------------------------
+*/
+LEFT JOIN final_scores fs
+    ON sca.Student_ID = fs.student_id
+
+/*
+------------------------------------------------------------------------------
+Course Acceptance Acknowledgement:
+Match by the student's enrollment AND exact course.
+------------------------------------------------------------------------------
+*/
+LEFT JOIN course_acceptance_scores cas
+    ON cas.Student_Course_Enrollment_ID =
+       sca.Student_Course_Enrollment_ID
+   AND cas.Course_Surr_Key =
+       sca.Course_Surr_Key
+
+ORDER BY
+    sca.Student_Last_Name,
+    sca.Student_First_Name,
+    sca.Student_ID;
