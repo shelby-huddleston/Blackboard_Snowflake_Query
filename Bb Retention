@@ -1,0 +1,389 @@
+
+-- ============================================================
+-- AT-RISK STUDENT REPORT
+-- Created: 06-14-2026
+-- ============================================================
+--
+-- PURPOSE:
+-- This query identifies students who may be academically
+-- at risk based on their Blackboard course activity and
+-- current course grade.
+--
+-- The report is intended to help identify students who
+-- may need additional academic support or outreach.
+--
+-- ============================================================
+-- AT-RISK CRITERIA
+-- ============================================================
+--
+-- A student is included in the report if they meet AT LEAST
+-- ONE of the following conditions:
+--
+-- 1. NEVER ACCESSED THE COURSE
+--    The student has no recorded course access activity.
+--
+-- 2. INACTIVE FOR 5 OR MORE DAYS
+--    The student's most recent recorded course access
+--    occurred 5 or more days ago.
+--
+-- 3. LOW CURRENT COURSE GRADE
+--    The student's current/final grade percentage
+--    is 70% or below.
+--
+-- A student does NOT need to meet all three conditions.
+-- Meeting any one condition qualifies the student for
+-- inclusion in the report.
+--
+-- ============================================================
+-- INFORMATION INCLUDED IN THE REPORT
+-- ============================================================
+--
+-- STUDENT INFORMATION:
+--   - Student ID (retrieved from PERSON.STAGE JSON)
+--   - First name
+--   - Last name
+--   - Email address
+--
+-- COURSE ACTIVITY:
+--   - Most recent course access date and time
+--   - Number of days since the last course access
+--
+-- ACADEMIC PERFORMANCE:
+--   - Current/final course grade percentage
+--   - Number of grade records containing a zero score
+--
+-- COURSE INFORMATION:
+--   - Course number
+--   - Course name
+--   - Course start date
+--   - Course end date
+--
+-- ============================================================
+-- DATA SOURCES
+-- ============================================================
+--
+-- CDM_LMS.PERSON_COURSE
+--   Identifies student enrollments and links students
+--   to their courses.
+--
+-- CDM_LMS.PERSON
+--   Provides student names, email addresses, and
+--   student IDs stored in the STAGE JSON field.
+--
+-- CDM_LMS.COURSE
+--   Provides course information, course dates, and
+--   parent/child course relationships.
+--
+-- CDM_LMS.COURSE_ACTIVITY
+--   Provides course access activity used to determine
+--   when each student last accessed their course.
+--
+-- CDM_LMS.GRADE
+--   Provides student grade information, including
+--   normalized scores and zero-score records.
+--
+-- CDM_LMS.GRADEBOOK
+--   Identifies the gradebook column designated
+--   as the final course grade.
+--
+-- ============================================================
+-- HOW THE QUERY WORKS
+-- ============================================================
+--
+-- STEP 1: CALCULATE LAST COURSE ACCESS
+--
+-- The last_course_access CTE retrieves the most recent
+-- course access timestamp for each student enrollment.
+--
+-- MAX(LAST_ACCESSED_TIME) identifies the latest
+-- recorded access.
+--
+-- Deleted course activity records are excluded.
+--
+-- STEP 2: CALCULATE CURRENT COURSE GRADE
+--
+-- The current_grade CTE retrieves the normalized
+-- score associated with the final gradebook column.
+--
+-- Only gradebook records with FINAL_GRADE_IND = 1
+-- and DELETED_IND = 0 are included.
+--
+-- Normalized scores are converted to percentages:
+--
+--   NORMALIZED_SCORE * 100
+--
+-- Example:
+--   0.85 = 85.00%
+--   0.70 = 70.00%
+--   0.65 = 65.00%
+--
+-- The result is rounded to two decimal places.
+--
+-- STEP 3: COUNT ZERO GRADES
+--
+-- The zero_grades CTE counts grade records where
+-- SCORE = 0 for each student-course enrollment.
+--
+-- Deleted grade records are excluded.
+--
+-- IMPORTANT:
+-- A zero grade does not necessarily indicate
+-- an assignment was never submitted.
+-- It only indicates that the recorded score is zero.
+--
+-- Zero grades are included as an additional indicator
+-- of academic performance but do not independently
+-- qualify a student for the at-risk report.
+--
+-- STEP 4: COMBINE STUDENT AND COURSE DATA
+--
+-- Student enrollments are joined to student and course
+-- records using PERSON_COURSE.
+--
+-- The three CTEs are connected using LEFT JOINs.
+--
+-- LEFT JOINs allow students to remain in the report
+-- even when course activity, grade information,
+-- or zero-grade records are unavailable.
+--
+-- STEP 5: APPLY ENROLLMENT AND COURSE FILTERS
+--
+-- Only student enrollments are included:
+--   PERSON_COURSE.COURSE_ROLE = 'S'
+--
+-- Student accounts, enrollments, and courses must
+-- be enabled and available.
+--
+-- Deleted student, enrollment, and course records
+-- are excluded.
+--
+-- Only courses currently in session are included:
+--   CURRENT_DATE BETWEEN START_DATE AND END_DATE
+--
+-- CHILD COURSES ARE EXCLUDED:
+--   COURSE.COURSE_PARENT_ID IS NULL
+--
+-- A child course has a populated COURSE_PARENT_ID.
+-- This filter retains parent courses and standalone
+-- courses where COURSE_PARENT_ID is NULL.
+--
+-- CONTINUING EDUCATION COURSES ARE EXCLUDED:
+--   COURSE_NUMBER ending in 'CE'
+--
+-- PREVIEW/TEST USERS ARE EXCLUDED:
+--   LAST_NAME ending in 'PREVIEWUSER'
+--
+-- STEP 6: IDENTIFY AT-RISK STUDENTS
+--
+-- After applying the course and enrollment filters,
+-- students are included if they:
+--
+--   - Have never accessed the course, OR
+--   - Have not accessed the course in 5+ days, OR
+--   - Have a current grade of 70% or below.
+--
+-- STEP 7: SORT THE RESULTS
+--
+-- Results are ordered by:
+--
+--   1. Highest number of zero grades first
+--   2. Course number
+--   3. Student last name
+--   4. Student first name
+--
+-- This places students with more recorded zero scores
+-- toward the top of the report.
+--
+-- ============================================================
+-- IMPORTANT REPORT CONSIDERATIONS
+-- ============================================================
+--
+-- 1. The report evaluates risk separately for each
+--    student-course enrollment.
+--
+-- 2. A student enrolled in multiple courses may appear
+--    multiple times if they meet the risk criteria
+--    in more than one course.
+--
+-- 3. Students with no recorded course activity can
+--    qualify as at-risk even if they have a high grade.
+--
+-- 4. Students with grades above 70% can still qualify
+--    if they have not accessed their course recently.
+--
+-- 5. Students who access their course regularly can
+--    still qualify if their grade is 70% or below.
+--
+-- 6. Students without a current grade can still
+--    qualify based on missing or outdated activity.
+--
+-- 7. The zero-grade count is used for reporting
+--    and sorting, not as an independent risk condition.
+--
+-- 8. A missing last access timestamp is treated
+--    as no recorded course access.
+--
+-- 9. The query uses the current system date/time
+--    whenever it runs, so results change over time.
+--
+-- 10. Course activity and grades are retained even
+--     when some associated data is missing because
+--     the CTEs are joined using LEFT JOINs.
+--
+-- ============================================================
+-- END OF REPORT DOCUMENTATION
+-- ============================================================
+
+
+-- Get each student-course enrollment's most recent LMS access time
+WITH last_course_access AS (
+
+    SELECT
+        ca.person_course_id,
+        MAX(ca.last_accessed_time) AS last_accessed_time
+
+    FROM CDM_LMS.COURSE_ACTIVITY ca
+
+    WHERE ca.row_deleted_time IS NULL
+
+    GROUP BY
+        ca.person_course_id
+),
+
+-- Get the current/final grade percentage for each student-course enrollment
+current_grade AS (
+
+    SELECT
+        g.person_course_id,
+        g.normalized_score,
+        ROUND(g.normalized_score * 100, 2) AS current_grade_percent
+
+    FROM CDM_LMS.GRADE g
+
+    INNER JOIN CDM_LMS.GRADEBOOK gb
+        ON gb.id = g.gradebook_id
+        AND gb.final_grade_ind = 1
+        AND gb.deleted_ind = 0
+
+    WHERE g.row_deleted_time IS NULL
+        AND g.normalized_score IS NOT NULL
+),
+
+-- Count zero scores for each student-course enrollment
+zero_grades AS (
+
+    SELECT
+        g.person_course_id,
+        COUNT(*) AS zero_grade_count
+
+    FROM CDM_LMS.GRADE g
+
+    WHERE g.row_deleted_time IS NULL
+        AND g.score = 0
+
+    GROUP BY
+        g.person_course_id
+)
+
+SELECT
+
+    -- Student information
+    p.stage:student_id::string AS student_id,
+    p.first_name,
+    p.last_name,
+    p.email,
+
+    -- Last course access and inactivity calculation
+    lca.last_accessed_time,
+    DATEDIFF(
+        'day',
+        lca.last_accessed_time,
+        CURRENT_TIMESTAMP()
+    ) AS days_since_last_access,
+
+    -- Grade and missing/zero-work indicators
+    cg.current_grade_percent,
+    COALESCE(zg.zero_grade_count, 0) AS zero_grade_count,
+
+    -- Course information
+    c.course_number,
+    c.name AS course_name,
+    c.start_date AS course_start_date,
+    c.end_date AS course_end_date
+
+FROM CDM_LMS.PERSON_COURSE pc
+
+-- Join student/person details
+INNER JOIN CDM_LMS.PERSON p
+    ON p.id = pc.person_id
+
+-- Join course details
+INNER JOIN CDM_LMS.COURSE c
+    ON c.id = pc.course_id
+
+-- Add last access data, if available
+LEFT JOIN last_course_access lca
+    ON lca.person_course_id = pc.id
+
+-- Add current grade data, if available
+LEFT JOIN current_grade cg
+    ON cg.person_course_id = pc.id
+
+-- Add zero-grade count, if available
+LEFT JOIN zero_grades zg
+    ON zg.person_course_id = pc.id
+
+WHERE
+
+    -- Only student enrollments
+    pc.course_role = 'S'
+
+    -- Only active/available enrollments and students
+    AND pc.available_ind = 1
+    AND pc.enabled_ind = 1
+    AND p.available_ind = 1
+    AND p.enabled_ind = 1
+
+    -- Exclude deleted enrollment, student, and course records
+    AND pc.row_deleted_time IS NULL
+    AND p.row_deleted_time IS NULL
+    AND c.row_deleted_time IS NULL
+
+    -- Only active/available courses
+    AND c.enabled_ind = 1
+    AND c.available_ind = 1
+
+    -- Exclude child courses.
+    -- A child course has COURSE_PARENT_ID populated.
+    AND c.course_parent_id IS NULL
+
+    -- Only courses currently in session
+    AND CURRENT_DATE BETWEEN c.start_date AND c.end_date
+
+    -- Exclude continuing education courses
+    AND UPPER(c.course_number) NOT LIKE '%CE'
+
+    -- Exclude preview/test users
+    AND UPPER(p.last_name) NOT LIKE '%PREVIEWUSER'
+
+    -- Flag students who meet at least one risk condition:
+    -- 1. They have never accessed the course
+    -- 2. They have not accessed the course in 5+ days
+    -- 3. Their current grade is 70% or below
+    AND (
+        lca.last_accessed_time IS NULL
+        OR DATEDIFF(
+            'day',
+            lca.last_accessed_time,
+            CURRENT_TIMESTAMP()
+        ) >= 5
+        OR cg.current_grade_percent <= 70
+    )
+
+-- Prioritize students with the most zero grades,
+-- then group by course and student name
+ORDER BY
+    zero_grade_count DESC,
+    c.course_number,
+    p.last_name,
+    p.first_name;
