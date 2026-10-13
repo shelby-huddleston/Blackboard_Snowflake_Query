@@ -1,0 +1,55 @@
+
+/*
+QUERY NAME: Blackboard Learn User Information and Account Status
+
+PURPOSE:
+Retrieves Blackboard Learn user records, including
+personal information, system and institution roles,
+and account availability and enabled indicators.
+
+DATA SOURCE:
+- CDM_LMS.PERSON: Contains Blackboard user information,
+  assigned roles, and account status indicators.
+
+FIELDS RETURNED:
+- ID: Unique internal person identifier.
+- FIRST_NAME: User's first name.
+- LAST_NAME: User's last name.
+- EMAIL: User's email address.
+- SYSTEM_ROLE: Assigned Blackboard system role.
+- INSTITUTION_ROLE: Assigned institutional role.
+- AVAILABLE_IND: User availability indicator.
+- ENABLED_IND: User account enabled indicator.
+
+FILTERING:
+- Excludes person records marked as deleted
+  using ROW_DELETED_TIME IS NULL.
+- Includes available and unavailable users.
+- Includes enabled and disabled users.
+- No specific system or institution roles are excluded.
+
+SORTING:
+- No ORDER BY clause is specified.
+- Results are not guaranteed to appear in any
+  particular order.
+
+NOTES:
+- The query returns all nondeleted person records.
+- AVAILABLE_IND and ENABLED_IND are displayed
+  but are not used to restrict the results.
+- A nondeleted user is not necessarily an active user.
+- The query does not check course enrollments,
+  login activity, or account creation dates.
+*/
+
+SELECT
+    p.ID,
+    p.FIRST_NAME,
+    p.LAST_NAME,
+    p.EMAIL,
+    p.SYSTEM_ROLE,
+    p.INSTITUTION_ROLE,
+    p.AVAILABLE_IND,
+    p.ENABLED_IND
+FROM CDM_LMS.PERSON p
+WHERE p.ROW_DELETED_TIME IS NULL;
