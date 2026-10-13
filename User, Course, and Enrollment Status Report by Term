@@ -1,0 +1,131 @@
+
+/*
+QUERY NAME: Fall 2026 User, Course, and Enrollment Status Report
+
+PURPOSE:
+Retrieves Blackboard Learn users enrolled in Fall 2026
+courses, including student information, course identifiers,
+enrollment roles, and account/course/membership statuses.
+
+DATA SOURCES:
+- CDM_LMS.PERSON_COURSE: Connects users to courses
+  and contains enrollment roles and status indicators.
+- CDM_LMS.PERSON: User information, identifiers,
+  and account status.
+- CDM_LMS.COURSE: Course identifiers and status.
+- CDM_LMS.TERM: Academic term information.
+
+FIELDS RETURNED:
+- Term: Term name, internal ID, and deletion timestamp.
+- Person: Username, student ID, name, email, external
+  batch UID, and data source from STAGE JSON.
+- Course: Internal course ID, external batch UID,
+  and data source from STAGE JSON.
+- Membership: Assigned course role.
+- Statuses: Person, course, and enrollment status
+  classified as DELETED, DISABLED, UNAVAILABLE,
+  or AVAILABLE.
+
+STATUS CLASSIFICATION:
+Each status uses the following priority:
+1. DELETED: ROW_DELETED_TIME is populated.
+2. DISABLED: ENABLED_IND = FALSE.
+3. UNAVAILABLE: AVAILABLE_IND = FALSE.
+4. AVAILABLE: None of the above conditions match.
+
+NOTE:
+The AVAILABLE category also includes records with
+NULL indicator values unless another condition matches.
+
+FILTERING:
+- Includes only courses associated with the term
+  'Fall 2026 (All Courses)'.
+- Includes deleted, disabled, and unavailable
+  person, course, and enrollment records.
+- Requires matching PERSON, COURSE, and TERM records
+  because INNER JOIN is used.
+- Does not restrict enrollment roles to students.
+
+SORTING:
+Results are sorted by term name, Blackboard username,
+and internal course ID in ascending order.
+
+IMPORTANT NOTES:
+- The report can help identify enrollment and access
+  status discrepancies across Fall 2026 courses.
+- Person and course external identifiers are extracted
+  from their respective STAGE JSON fields.
+- The term deletion timestamp is displayed but
+  is not used as a filter.
+- One user may appear multiple times when enrolled
+  in multiple courses.
+- The statuses reflect stored database indicators,
+  not verified real-time access to Blackboard.
+*/
+
+SELECT 
+    -- Term info (first)
+    t.name                       AS term_name,
+    t.id                         AS term_id,
+    t.row_deleted_time           AS term_deleted_time,
+
+    -- Person identifiers
+    p.stage:user_id::string      AS user_id,
+    p.stage:student_id::string   AS student_id,
+    p.first_name                 AS first_name,
+    p.last_name                  AS last_name,
+    p.email                      AS email,
+    p.stage:batch_uid::string    AS person_external_id,       -- external key from PERSON.STAGE
+    p.stage:data_src_batchuid::string AS person_data_source,  -- data source indicator from STAGE (if present)
+
+    -- Course identifiers
+    pc.course_id,
+    c.stage:batch_uid::string    AS course_external_id,       -- external key from COURSE.STAGE
+    c.stage:data_src_batchuid::string AS course_data_source,   -- data source indicator from COURSE.STAGE (if present)
+
+    -- Membership
+    pc.course_role,
+
+    -- Compressed statuses (priority: deleted -> disabled -> unavailable -> available)
+    CASE
+        WHEN p.row_deleted_time IS NOT NULL THEN 'DELETED'
+        WHEN p.enabled_ind = FALSE THEN 'DISABLED'
+        WHEN p.available_ind = FALSE THEN 'UNAVAILABLE'
+        ELSE 'AVAILABLE'
+    END AS person_status,
+
+    CASE
+        WHEN c.row_deleted_time IS NOT NULL THEN 'DELETED'
+        WHEN c.enabled_ind = FALSE THEN 'DISABLED'
+        WHEN c.available_ind = FALSE THEN 'UNAVAILABLE'
+        ELSE 'AVAILABLE'
+    END AS course_status,
+
+    CASE
+        WHEN pc.row_deleted_time IS NOT NULL THEN 'DELETED'
+        WHEN pc.enabled_ind = FALSE THEN 'DISABLED'
+        WHEN pc.available_ind = FALSE THEN 'UNAVAILABLE'
+        ELSE 'AVAILABLE'
+    END AS membership_status
+
+    /* Detailed fields kept here for reference (commented out):
+    p.available_ind AS person_available,
+    p.enabled_ind AS person_enabled,
+    p.row_deleted_time AS person_deleted_time,
+    c.available_ind AS course_available,
+    c.enabled_ind AS course_enabled,
+    c.row_deleted_time AS course_deleted_time,
+    pc.available_ind AS membership_available,
+    pc.enabled_ind AS membership_enabled,
+    pc.row_deleted_time AS membership_deleted_time
+    */
+
+FROM CDM_LMS.PERSON_COURSE pc
+INNER JOIN CDM_LMS.PERSON p 
+    ON pc.person_id = p.id
+INNER JOIN CDM_LMS.COURSE c 
+    ON pc.course_id = c.id
+INNER JOIN CDM_LMS.TERM t
+    ON c.term_id = t.id
+WHERE t.name = 'Fall 2026 (All Courses)'   -- replace with the term name you want, or use "t.name IN (...)" for multiple
+ORDER BY t.name, user_id, pc.course_id;
