@@ -1,0 +1,514 @@
+
+/*
+QUERY NAME: Rubric Usage by Course - Fall 2025 and Spring 2026
+
+PURPOSE:
+Identifies Blackboard Learn courses in Fall 2025 and
+Spring 2026 that have rubrics associated with evaluation
+records.
+
+The query counts distinct rubric records by course
+and displays the course number, course name, academic
+term, and associated instructors.
+
+Results are sorted from the highest rubric count
+to the lowest.
+
+This report can be used to analyze rubric usage
+and faculty adoption of rubric-based assessment
+across the selected academic terms.
+
+DATA SOURCES:
+
+1. CDM_LMS.COURSE (c)
+   Contains Blackboard course information, including
+   course numbers, names, and term identifiers.
+
+2. CDM_LMS.PERSON_COURSE (pc)
+   Connects users to courses and identifies their
+   assigned course roles.
+
+3. CDM_LMS.PERSON (p)
+   Contains instructor names and user information.
+
+4. CDM_LMS.EVALUABLE_ITEM (ei)
+   Contains evaluable items, including records
+   identified as rubrics.
+
+5. CDM_LMS.EVALUATION (e)
+   Contains evaluation records associated with
+   evaluable items.
+
+6. CDM_LMS.TERM (t)
+   Contains academic term information, including
+   the term name.
+
+TABLE RELATIONSHIPS:
+
+1. PERSON_COURSE.PERSON_ID = PERSON.ID
+   Connects course enrollment records to users.
+
+2. PERSON_COURSE.COURSE_ID = COURSE.ID
+   Connects instructor enrollments to courses.
+
+3. EVALUABLE_ITEM.COURSE_ID = COURSE.ID
+   Associates evaluable items with their courses.
+
+4. COURSE.TERM_ID = TERM.ID
+   Associates courses with academic terms.
+
+5. EVALUATION.EVALUABLE_ITEM_ID = EVALUABLE_ITEM.ID
+   Connects evaluation records to evaluable items.
+
+All relationships use INNER JOIN or JOIN,
+which is equivalent to INNER JOIN.
+
+IMPORTANT:
+Only courses having matching instructor,
+evaluable item, term, and evaluation records
+are included in the results.
+
+------------------------------------------------------------
+COMMON TABLE EXPRESSION (CTE)
+------------------------------------------------------------
+
+CTE NAME: DistinctInstructors
+
+PURPOSE:
+Identifies users assigned the Instructor role
+within Blackboard courses.
+
+FIELDS RETURNED:
+
+1. course_id
+   Internal course identifier associated with
+   the instructor enrollment.
+
+2. instructor_name
+   Combines the instructor's first and last name
+   using CONCAT().
+
+   Example:
+   Jane Smith
+
+3. rn
+   Assigns a sequential row number to instructors
+   within each course.
+
+INSTRUCTOR FILTERING:
+
+pc.course_role = 'I'
+
+Includes only course enrollment records
+assigned the Instructor role.
+
+pc.row_deleted_time IS NULL
+
+Excludes instructor enrollment records
+marked as deleted.
+
+ROW_NUMBER FUNCTION:
+
+ROW_NUMBER() OVER (
+    PARTITION BY pc.course_id
+    ORDER BY p.first_name, p.last_name
+)
+
+PARTITION BY:
+Separates instructor records by course.
+
+ORDER BY:
+Assigns row numbers alphabetically by
+instructor first name and last name.
+
+Example:
+
+COURSE_ID    INSTRUCTOR_NAME    RN
+1001         Jane Smith         1
+1001         Michael Jones      2
+1002         Sarah Brown        1
+
+IMPORTANT:
+- The ROW_NUMBER() function does not remove
+  additional instructors.
+- The main query does not filter rn = 1.
+- Therefore, multiple instructors can be
+  associated with the same course.
+- SELECT DISTINCT applies to the complete
+  selected row, including rn.
+- Since rn is unique within each course,
+  DISTINCT does not reliably eliminate
+  duplicate instructor enrollment records.
+- Deleted person records are not excluded.
+- Instructor availability and enabled status
+  are not evaluated.
+
+------------------------------------------------------------
+MAIN QUERY
+------------------------------------------------------------
+
+PURPOSE:
+Counts distinct rubric records associated with
+evaluation records for each qualifying course.
+
+The query combines:
+- Course information.
+- Academic term information.
+- Instructor names.
+- Rubric records.
+- Evaluation records.
+
+------------------------------------------------------------
+FIELDS RETURNED
+------------------------------------------------------------
+
+1. course_number
+   Blackboard course number from COURSE.COURSE_NUMBER.
+
+2. course_name
+   Blackboard course name.
+
+3. term_name
+   Academic term name from CDM_LMS.TERM.
+
+4. used_rubric_count
+   Number of distinct qualifying rubric records
+   associated with evaluation records in the course.
+
+5. instructors
+   Comma-separated list of distinct instructor
+   names associated with the course.
+
+------------------------------------------------------------
+RUBRIC IDENTIFICATION
+------------------------------------------------------------
+
+ei.type = 'RUBRIC'
+
+Restricts EVALUABLE_ITEM records to those
+whose TYPE value is RUBRIC.
+
+This condition excludes other evaluable
+item types.
+
+ei.row_deleted_time IS NULL
+
+Excludes rubric records marked as deleted.
+
+ei.name IS NOT NULL
+
+Excludes rubric records that do not have
+a populated name.
+
+ei.name != 'Move Over Beethoven'
+
+Excludes rubric records whose name exactly
+matches 'Move Over Beethoven'.
+
+IMPORTANT:
+The name exclusion uses the != operator.
+
+This comparison is case-sensitive under
+ordinary Snowflake string comparison behavior.
+
+Different capitalization or additional
+characters may not be excluded.
+
+------------------------------------------------------------
+RUBRIC USAGE IDENTIFICATION
+------------------------------------------------------------
+
+JOIN CDM_LMS.EVALUATION e
+    ON ei.id = e.evaluable_item_id
+
+Requires each qualifying rubric record to have
+at least one matching evaluation record.
+
+Because this is an INNER JOIN:
+
+- Rubrics with matching evaluations are included.
+- Rubrics without matching evaluations are excluded.
+
+IMPORTANT:
+A matching evaluation record indicates an
+association between the rubric and an evaluation.
+
+It does not necessarily establish that the rubric
+was completed, scored, or used in a finalized
+student assessment.
+
+The query does not filter:
+- EVALUATION.ROW_DELETED_TIME
+- EVALUATION.PRIMARY_IND
+- EVALUATION.SCORE
+- EVALUATION.STAGE
+
+Therefore, evaluation records with different
+statuses or characteristics may contribute
+to whether a rubric qualifies.
+
+------------------------------------------------------------
+RUBRIC COUNT CALCULATION
+------------------------------------------------------------
+
+COUNT(DISTINCT ei.id) AS used_rubric_count
+
+Counts the number of distinct qualifying
+EVALUABLE_ITEM.ID values per result group.
+
+DISTINCT prevents the same rubric record from
+being counted multiple times when it has
+multiple matching evaluation records.
+
+EXAMPLE:
+
+Course A has:
+- Rubric 1 with 10 evaluation records.
+- Rubric 2 with 5 evaluation records.
+- Rubric 3 with 1 evaluation record.
+
+USED_RUBRIC_COUNT = 3
+
+The query counts three distinct rubric records,
+not sixteen evaluation records.
+
+IMPORTANT:
+This is a count of distinct rubric identifiers,
+not a count of:
+- Individual rubric grading events.
+- Student submissions graded with rubrics.
+- Total evaluation records.
+- Faculty members who used rubrics.
+- Rubric criteria or rubric rows.
+
+The query also does not explicitly verify
+whether each rubric is a parent rubric.
+
+Although the existing comment says
+"Count parent rubrics only", there is no
+condition checking EVALUABLE_ITEM_PARENT_ID.
+
+------------------------------------------------------------
+INSTRUCTOR AGGREGATION
+------------------------------------------------------------
+
+LISTAGG(DISTINCT di.instructor_name, ', ')
+    AS instructors
+
+Combines distinct instructor names into
+one comma-separated field per course group.
+
+Example:
+Jane Smith, Michael Jones, Sarah Brown
+
+DISTINCT:
+Removes repeated identical instructor names
+from the aggregated output.
+
+IMPORTANT:
+- Multiple instructors are displayed together.
+- Instructor names are not explicitly sorted
+  within LISTAGG because WITHIN GROUP is absent.
+- Identical names belonging to different
+  people may be combined into one entry.
+- The instructor list does not identify which
+  instructor created or used a rubric.
+- The presence of an instructor on a course
+  does not establish individual rubric adoption.
+
+------------------------------------------------------------
+COURSE FILTERING
+------------------------------------------------------------
+
+c.row_deleted_time IS NULL
+
+Excludes courses marked as deleted.
+
+IMPORTANT:
+The comment "Only include active courses"
+refers to the deletion timestamp condition.
+
+However, the query does not check:
+
+- COURSE.AVAILABLE_IND
+- COURSE.ENABLED_IND
+- COURSE.START_DATE
+- COURSE.END_DATE
+
+Therefore, courses that are unavailable,
+disabled, or outside their scheduled dates
+may still appear in the results.
+
+------------------------------------------------------------
+ACADEMIC TERM FILTERING
+------------------------------------------------------------
+
+(t.name LIKE 'Fall 2025%'
+ OR t.name LIKE 'Spring 2026%')
+
+Restricts results to terms whose names begin with:
+
+- Fall 2025
+- Spring 2026
+
+The percent sign (%) allows additional
+characters after the matching text.
+
+Examples of qualifying names:
+
+- Fall 2025
+- Fall 2025 (All Courses)
+- Spring 2026
+- Spring 2026 (All Courses)
+
+IMPORTANT:
+- Filtering uses the TERM.NAME field.
+- It does not search course numbers for
+  academic year or term patterns.
+- LIKE is case-sensitive in Snowflake.
+- Term names with different capitalization
+  may not match.
+
+------------------------------------------------------------
+GROUPING
+------------------------------------------------------------
+
+GROUP BY
+    c.course_number,
+    c.name,
+    t.name
+
+Creates one aggregated result group for
+each distinct combination of:
+
+1. Course number.
+2. Course name.
+3. Academic term name.
+
+The rubric count and instructor list are
+calculated within each group.
+
+IMPORTANT:
+COURSE.ID is not included in GROUP BY.
+
+If multiple internal course records have the
+same course number, course name, and term name,
+their matching rubric records can be combined
+into one result group.
+
+Therefore, the output is grouped by displayed
+course attributes rather than guaranteed to
+contain one row per unique COURSE.ID.
+
+------------------------------------------------------------
+SORTING
+------------------------------------------------------------
+
+ORDER BY used_rubric_count DESC
+
+Sorts courses by the number of distinct
+qualifying rubric records in descending order.
+
+Courses with the highest counts appear first.
+
+Example:
+
+Course A: 12 rubrics
+Course B:  7 rubrics
+Course C:  3 rubrics
+
+No secondary sorting condition is specified.
+
+Courses with equal rubric counts are not
+guaranteed to appear in a particular order.
+
+------------------------------------------------------------
+IMPORTANT NOTES
+------------------------------------------------------------
+
+- The report focuses on Fall 2025 and
+  Spring 2026 academic terms.
+
+- Only courses with matching instructor
+  and evaluation records are included.
+
+- The report counts distinct rubric records
+  associated with at least one evaluation.
+
+- Courses with no matching rubric evaluations
+  are excluded rather than displayed with zero.
+
+- Duplicate rubric evaluations do not
+  increase the distinct rubric count.
+
+- Multiple instructors are combined into
+  one comma-separated field.
+
+- Instructor names do not establish which
+  faculty members actually used rubrics.
+
+- The query excludes the rubric name
+  'Move Over Beethoven'.
+
+- Deleted rubric and instructor enrollment
+  records are excluded.
+
+- Deleted evaluation records are not
+  explicitly excluded.
+
+- Course availability and enabled status
+  are not evaluated.
+
+- The query does not measure rubric scores,
+  grading outcomes, or student performance.
+
+- ROW_NUMBER() is calculated in the CTE
+  but is not used to restrict the final results.
+
+- The query does not use CURRENT_DATE().
+
+- Results reflect rubric and evaluation
+  records available in Blackboard Data
+  - Illuminate at query time.
+
+*/
+
+WITH DistinctInstructors AS (
+    SELECT DISTINCT
+        pc.course_id,
+        CONCAT(p.first_name, ' ', p.last_name) AS instructor_name,
+        ROW_NUMBER() OVER (
+            PARTITION BY pc.course_id
+            ORDER BY p.first_name, p.last_name
+        ) AS rn
+    FROM CDM_LMS.PERSON_COURSE pc
+    JOIN CDM_LMS.PERSON p
+        ON p.id = pc.person_id
+    WHERE
+        pc.course_role = 'I'  -- Only instructors
+        AND pc.row_deleted_time IS NULL
+)
+
+SELECT
+    c.course_number AS course_number,
+    c.name AS course_name,
+    t.name AS term_name,  -- Added term name from cdm_lms.term
+    COUNT(DISTINCT ei.id) AS used_rubric_count,  -- Count parent rubrics only
+    LISTAGG(DISTINCT di.instructor_name, ', ') AS instructors
+FROM CDM_LMS.COURSE c
+JOIN CDM_LMS.EVALUABLE_ITEM ei
+    ON c.id = ei.course_id
+INNER JOIN DistinctInstructors di
+    ON c.id = di.course_id
+JOIN CDM_LMS.TERM t  -- Join with term table
+    ON c.term_id = t.id
+JOIN CDM_LMS.EVALUATION e
+    ON ei.id = e.evaluable_item_id
+WHERE
+    c.row_deleted_time IS NULL  -- Only include active courses
+    AND (ei.name IS NOT NULL AND ei.name != 'Move Over Beethoven')
+    AND ei.row_deleted_time IS NULL
+    AND ei.type = 'RUBRIC'
+    AND (t.name like 'Fall 2025%' OR t.name like 'Spring 2026%')
+GROUP BY c.course_number, c.name, t.name
+ORDER BY used_rubric_count DESC;
