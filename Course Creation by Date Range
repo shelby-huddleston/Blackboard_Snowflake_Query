@@ -1,0 +1,48 @@
+
+/*
+QUERY NAME: Courses Created Between April and July 2026
+
+PURPOSE:
+Retrieves Blackboard Learn courses created between
+April 1, 2026, and July 31, 2026.
+
+DATA SOURCE:
+- CDM_LMS.COURSE: Contains course identifiers,
+  course numbers, and creation timestamps.
+
+FIELDS RETURNED:
+- Batch UID: Blackboard course batch identifier
+  extracted from the COURSE.STAGE JSON field.
+- Course Number: Blackboard course number.
+- Created Time: Date and time the course was created.
+
+FILTERING:
+- Includes courses created after April 1, 2026,
+  at midnight.
+- Includes courses created before August 1, 2026.
+- No course availability, enabled, or deletion
+  filters are applied.
+
+SORTING:
+- No ORDER BY clause is specified.
+- Results are not guaranteed to be in date order.
+
+NOTES:
+- The query includes courses created during
+  April through July 2026.
+- The exact timestamp of April 1 at 00:00:00
+  is excluded by the > operator.
+- Courses created on or after August 1 are excluded.
+- Batch UID values are extracted from STAGE JSON data.
+*/
+
+SELECT
+    TRIM(CDM_LMS.COURSE.STAGE['batch_uid'], '"') AS "Batch UID",
+    CDM_LMS.COURSE.COURSE_NUMBER AS "Course Number",
+    CDM_LMS.COURSE.CREATED_TIME AS "Created Time"
+
+FROM CDM_LMS.COURSE
+
+WHERE
+    CREATED_TIME > TO_DATE('2026-04-01', 'YYYY-MM-DD')
+    AND CREATED_TIME < TO_DATE('2026-08-01', 'YYYY-MM-DD');
