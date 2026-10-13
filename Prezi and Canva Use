@@ -1,0 +1,586 @@
+
+/*
+QUERY NAME: Prezi and Canva External Links in Blackboard Courses
+
+PURPOSE:
+Identifies Prezi and Canva URLs referenced within Blackboard
+Learn course content.
+
+The query searches course item descriptions and STAGE JSON
+data for Prezi and Canva links, identifies the course and
+content item associated with each URL, and retrieves
+instructor usernames.
+
+It also counts distinct external URLs per course and
+indicates whether a course contains multiple unique links.
+
+DATA SOURCES:
+
+1. CDM_LMS.COURSE (c)
+   Contains Blackboard course information, including
+   course numbers, course names, and internal identifiers.
+
+2. CDM_LMS.COURSE_ITEM (ci)
+   Contains course content items, descriptions, STAGE data,
+   item types, and parent content item relationships.
+
+3. CDM_LMS.PERSON_COURSE (pc)
+   Associates users with courses and identifies
+   their assigned course roles.
+
+4. CDM_LMS.PERSON (p)
+   Contains user information, including Blackboard
+   usernames stored in the STAGE JSON field.
+
+TABLE RELATIONSHIPS:
+
+1. PERSON_COURSE.PERSON_ID = PERSON.ID
+   Connects course enrollments to user records.
+
+2. COURSE_ITEM.COURSE_ID = COURSE.ID
+   Connects content items to their courses.
+
+3. COURSE_ITEM.PARENT_COURSE_ITEM_ID = COURSE_ITEM.ID
+   Connects a content item to its immediate parent item.
+
+4. PERSON_COURSE.COURSE_ID = COURSE.ID
+   Connects aggregated instructor information to courses.
+
+COMMON TABLE EXPRESSIONS (CTEs):
+
+The query uses three CTEs:
+
+1. instructors
+2. external_links
+3. course_counts
+
+------------------------------------------------------------
+CTE 1: instructors
+------------------------------------------------------------
+
+PURPOSE:
+Identifies Blackboard users assigned the Instructor role
+and combines their usernames into one field per course.
+
+INSTRUCTOR IDENTIFICATION:
+
+pc.COURSE_ROLE = 'I'
+
+Includes course enrollment records assigned the
+Instructor role.
+
+USERNAME EXTRACTION:
+
+p.STAGE:user_id::string
+
+Retrieves the Blackboard username from the PERSON.STAGE
+JSON field and converts the value into a string.
+
+LISTAGG FUNCTION:
+
+LISTAGG(
+    DISTINCT p.STAGE:user_id::string,
+    ', '
+)
+
+Combines distinct instructor usernames into one
+comma-separated field.
+
+Example:
+jsmith, mjones, rwilliams
+
+DISTINCT:
+Prevents repeated identical usernames from appearing
+multiple times within the same course's aggregated list.
+
+WITHIN GROUP:
+Sorts usernames alphabetically within the combined field.
+
+GROUP BY:
+Produces one aggregated instructor record per COURSE_ID.
+
+IMPORTANT:
+- Multiple instructors are combined into one field.
+- Instructors without a user_id in STAGE contribute
+  no username to the LISTAGG result.
+- The query does not filter deleted, unavailable,
+  or disabled instructor enrollment records.
+- The query does not filter deleted, unavailable,
+  or disabled person records.
+- Instructor identification is based on COURSE_ROLE = 'I',
+  not PRIMARY_INSTRUCTOR_IND.
+
+------------------------------------------------------------
+CTE 2: external_links
+------------------------------------------------------------
+
+PURPOSE:
+Searches course content for Prezi and Canva URLs and
+extracts each matching link into a separate record.
+
+COURSE INFORMATION:
+
+- COURSE_KEY:
+  Internal unique identifier from COURSE.ID.
+
+- COURSE_NUMBER:
+  Blackboard course number.
+
+- COURSE_NAME:
+  Name of the Blackboard course.
+
+CONTENT ITEM INFORMATION:
+
+- COURSE_ITEM_ID:
+  Unique internal content item identifier.
+
+- ITEM_NAME:
+  Name of the Blackboard content item containing
+  the external URL.
+
+PARENT CONTENT ITEM INFORMATION:
+
+The query uses a LEFT JOIN to connect each course
+item to its immediate parent content item.
+
+parent_ci.ID = ci.PARENT_COURSE_ITEM_ID
+
+The following parent information is returned:
+
+1. LEARNING_MODULE
+   Name of the immediate parent content item.
+
+2. PARENT_ITEM_TYPE
+   Type of the parent content item.
+
+3. PARENT_ITEM_TYPE_SOURCE_CODE
+   Original LMS item type code for the parent.
+
+IMPORTANT:
+The LEARNING_MODULE field is an alias for the
+immediate parent item's name.
+
+The query does not verify that the parent is actually
+a Blackboard Learning Module.
+
+A parent could also be a folder or another type
+of container.
+
+Items without a matching parent will have NULL
+values for the parent information.
+
+------------------------------------------------------------
+EXTERNAL URL EXTRACTION
+------------------------------------------------------------
+
+The query searches two sources within each content item:
+
+1. COURSE_ITEM.DESCRIPTION
+2. COURSE_ITEM.STAGE
+
+SEARCH TEXT CONSTRUCTION:
+
+COALESCE(ci.DESCRIPTION, '') || ' ' ||
+COALESCE(TO_VARCHAR(ci.STAGE), '')
+
+COALESCE:
+Replaces NULL values with empty strings.
+
+TO_VARCHAR:
+Converts the STAGE JSON data into text so it can
+be searched for URLs.
+
+The two text values are combined into one string.
+
+REGULAR EXPRESSION:
+
+REGEXP_SUBSTR_ALL()
+
+Searches the combined text and returns an array
+containing all matching Prezi and Canva URLs.
+
+SUPPORTED WEBSITES:
+
+- prezi.com
+- www.prezi.com
+- canva.com
+- www.canva.com
+
+The expression also supports subdomains, such as:
+
+- view.genially.prezi.com
+- design.canva.com
+
+The URL must begin with http:// or https://.
+
+The expression requires a slash after the domain.
+
+IMPORTANT:
+- The expression searches for URL patterns.
+- It does not validate whether the links work.
+- It does not verify whether content is publicly
+  accessible or requires authentication.
+- Protocol-relative URLs beginning with //
+  are not matched by this expression.
+- Bare domain names without http:// or https://
+  are not matched.
+- URLs without a slash after the domain are not matched.
+
+LATERAL FLATTEN:
+
+Converts the array of extracted URLs into
+individual result rows.
+
+Examples:
+
+- One content item with one matching URL
+  produces one extracted row.
+
+- One content item with three matching URLs
+  produces three extracted rows.
+
+- A content item with no matching URL
+  produces no extracted rows.
+
+DISTINCT:
+
+SELECT DISTINCT removes duplicate rows where
+all selected field values are identical.
+
+IMPORTANT:
+The same URL can still appear multiple times
+if it belongs to different content items.
+
+COURSE FILTER:
+
+--WHERE c.COURSE_NUMBER ILIKE '%2026_FA'
+
+This condition is currently commented out.
+
+Therefore, the query searches all courses
+rather than only Fall 2026 courses.
+
+Removing the comment marker would activate
+the Fall 2026 course-number filter.
+
+NOTE:
+The underscore (_) in the ILIKE pattern is a
+single-character wildcard rather than a literal
+underscore.
+
+DELETION AND AVAILABILITY FILTERS:
+
+The external_links CTE does not filter:
+- Deleted courses.
+- Deleted content items.
+- Unavailable courses.
+- Disabled courses.
+- Unavailable content items.
+
+Therefore, matching links may be returned from
+records that are no longer active or available.
+
+------------------------------------------------------------
+CTE 3: course_counts
+------------------------------------------------------------
+
+PURPOSE:
+Counts the number of distinct extracted Prezi and
+Canva URLs associated with each course.
+
+COUNT(DISTINCT URL):
+
+Calculates the number of unique URL strings
+identified within each course.
+
+GROUP BY COURSE_KEY:
+Produces one link count per internal course identifier.
+
+EXAMPLE:
+
+Course A:
+- Prezi URL 1
+- Prezi URL 2
+- Canva URL 1
+
+LINK_COUNT = 3
+
+If the same Prezi URL appears in five content items,
+it contributes only one unique URL to LINK_COUNT.
+
+IMPORTANT:
+LINK_COUNT measures distinct URL strings, not:
+- Number of content items.
+- Number of embedded presentations.
+- Number of student accesses.
+- Number of video or presentation views.
+- Number of unique Prezi or Canva projects.
+
+Different URL variations pointing to the same
+resource may be counted separately.
+
+------------------------------------------------------------
+FINAL SELECT
+------------------------------------------------------------
+
+The final query combines:
+
+1. External URLs and content information.
+2. Aggregated instructor usernames.
+3. Distinct URL counts per course.
+
+Both supporting CTEs use LEFT JOIN.
+
+This preserves matching external link records
+even when instructor information is unavailable.
+
+FIELDS RETURNED:
+
+1. COURSE_ID
+   Blackboard course number.
+
+2. COURSE_NAME
+   Blackboard course name.
+
+3. INSTRUCTOR_USERNAME
+   Comma-separated list of instructor usernames.
+
+4. LINK_COUNT
+   Total distinct extracted Prezi and Canva URL
+   strings associated with the course.
+
+5. MULTIPLE_LINKS
+   Indicates whether the course has more than
+   one distinct extracted URL.
+
+   - YES: LINK_COUNT > 1
+   - NO : LINK_COUNT <= 1
+
+6. WEBSITE
+   Identifies the website associated with the URL.
+
+7. LEARNING_MODULE
+   Name of the immediate parent content item.
+
+8. PARENT_ITEM_TYPE
+   Blackboard item type of the parent.
+
+9. PARENT_ITEM_TYPE_SOURCE_CODE
+   Original LMS item type code for the parent.
+
+10. ITEM_NAME
+    Name of the content item containing the URL.
+
+11. URL
+    Extracted Prezi or Canva URL.
+
+------------------------------------------------------------
+WEBSITE CLASSIFICATION
+------------------------------------------------------------
+
+The CASE statement classifies URLs based on domain text.
+
+WHEN el.URL ILIKE '%prezi.com%'
+    THEN 'PREZI'
+
+WHEN el.URL ILIKE '%canva.com%'
+    THEN 'CANVA'
+
+ELSE 'OTHER'
+
+ILIKE performs case-insensitive matching.
+
+IMPORTANT:
+The regular expression already limits extracted
+URLs to Prezi and Canva domain patterns.
+
+Therefore, the OTHER category is not expected
+under normal matching conditions.
+
+The classification is based on matching text
+within the URL rather than accessing the website.
+
+------------------------------------------------------------
+MULTIPLE LINKS INDICATOR
+------------------------------------------------------------
+
+CASE
+    WHEN cc.LINK_COUNT > 1 THEN 'YES'
+    ELSE 'NO'
+END AS MULTIPLE_LINKS
+
+Identifies whether a course contains more than
+one distinct extracted URL.
+
+Examples:
+
+LINK_COUNT = 1  -> NO
+LINK_COUNT = 2  -> YES
+LINK_COUNT = 10 -> YES
+
+IMPORTANT:
+This indicator applies to the entire course,
+not the individual content item.
+
+A course with two unique links will display
+YES on every returned link record for that course.
+
+------------------------------------------------------------
+SORTING
+------------------------------------------------------------
+
+Results are ordered by:
+
+1. COURSE_NUMBER
+   Groups results by Blackboard course number.
+
+2. WEBSITE
+   Groups results by PREZI or CANVA classification.
+
+3. LEARNING_MODULE
+   Sorts by immediate parent item name.
+
+4. ITEM_NAME
+   Sorts by the content item name.
+
+5. URL
+   Sorts extracted URLs alphabetically.
+
+------------------------------------------------------------
+IMPORTANT NOTES
+------------------------------------------------------------
+
+- The query searches Prezi and Canva URLs within
+  course item descriptions and STAGE data.
+
+- The query does not search attached file contents
+  or other course item fields.
+
+- All courses are searched because the Fall 2026
+  filter is currently commented out.
+
+- Multiple instructor usernames are combined into
+  one comma-separated field.
+
+- The LEARNING_MODULE column identifies the immediate
+  parent item and does not guarantee the parent is
+  a Blackboard Learning Module.
+
+- Duplicate extracted rows are removed within
+  the external_links CTE using DISTINCT.
+
+- LINK_COUNT counts unique URL strings per course.
+
+- MULTIPLE_LINKS identifies courses containing
+  more than one unique extracted URL.
+
+- No course, enrollment, person, or content item
+  deletion/availability filtering is applied.
+
+- The query does not measure whether students
+  have accessed or interacted with the links.
+
+- The query does not confirm whether the external
+  websites or presentations remain accessible.
+
+- Results reflect external URLs stored in
+  Blackboard Data - Illuminate at query time.
+
+*/
+
+WITH instructors AS (
+    SELECT
+        pc.COURSE_ID,
+        LISTAGG(
+            DISTINCT p.STAGE:user_id::string,
+            ', '
+        ) WITHIN GROUP (
+            ORDER BY p.STAGE:user_id::string
+        ) AS INSTRUCTOR_USERNAME
+    FROM CDM_LMS.PERSON_COURSE pc
+    INNER JOIN CDM_LMS.PERSON p
+        ON p.ID = pc.PERSON_ID
+    WHERE pc.COURSE_ROLE = 'I'
+    GROUP BY pc.COURSE_ID
+),
+
+external_links AS (
+    SELECT DISTINCT
+        c.ID AS COURSE_KEY,
+        c.COURSE_NUMBER,
+        c.NAME AS COURSE_NAME,
+
+        ci.ID AS COURSE_ITEM_ID,
+        ci.NAME AS ITEM_NAME,
+
+        parent_ci.NAME AS LEARNING_MODULE,
+        parent_ci.ITEM_TYPE AS PARENT_ITEM_TYPE,
+        parent_ci.ITEM_TYPE_SOURCE_CODE AS PARENT_ITEM_TYPE_SOURCE_CODE,
+
+        f.VALUE::string AS URL
+
+    FROM CDM_LMS.COURSE c
+
+    INNER JOIN CDM_LMS.COURSE_ITEM ci
+        ON ci.COURSE_ID = c.ID
+
+    LEFT JOIN CDM_LMS.COURSE_ITEM parent_ci
+        ON parent_ci.ID = ci.PARENT_COURSE_ITEM_ID
+
+    , LATERAL FLATTEN(
+        INPUT => REGEXP_SUBSTR_ALL(
+            COALESCE(ci.DESCRIPTION, '') || ' ' ||
+            COALESCE(TO_VARCHAR(ci.STAGE), ''),
+            'https?://([^[:space:]\"''<>]*\\.)?(prezi\\.com|canva\\.com)/[^[:space:]\"''<>]*'
+        )
+    ) f
+
+    --WHERE c.COURSE_NUMBER ILIKE '%2026_FA'
+),
+
+course_counts AS (
+    SELECT
+        COURSE_KEY,
+        COUNT(DISTINCT URL) AS LINK_COUNT
+    FROM external_links
+    GROUP BY COURSE_KEY
+)
+
+SELECT
+    el.COURSE_NUMBER AS COURSE_ID,
+    el.COURSE_NAME,
+    i.INSTRUCTOR_USERNAME,
+
+    cc.LINK_COUNT,
+
+    CASE
+        WHEN cc.LINK_COUNT > 1 THEN 'YES'
+        ELSE 'NO'
+    END AS MULTIPLE_LINKS,
+
+    CASE
+        WHEN el.URL ILIKE '%prezi.com%' THEN 'PREZI'
+        WHEN el.URL ILIKE '%canva.com%' THEN 'CANVA'
+        ELSE 'OTHER'
+    END AS WEBSITE,
+
+    el.LEARNING_MODULE,
+    el.PARENT_ITEM_TYPE,
+    el.PARENT_ITEM_TYPE_SOURCE_CODE,
+    el.ITEM_NAME,
+    el.URL
+
+FROM external_links el
+
+LEFT JOIN instructors i
+    ON i.COURSE_ID = el.COURSE_KEY
+
+LEFT JOIN course_counts cc
+    ON cc.COURSE_KEY = el.COURSE_KEY
+
+ORDER BY
+    el.COURSE_NUMBER,
+    WEBSITE,
+    el.LEARNING_MODULE,
+    el.ITEM_NAME,
+    el.URL;
