@@ -1,0 +1,38 @@
+-- AI Conversation Course Items Report
+-- Lists Blackboard course items with "AI Conversation" in their name.
+-- Includes only active courses and course items (not deleted).
+-- Filters for Blackboard test/assessment links.
+-- Excludes Socratic Questioning and Role-Playing AI Conversations.
+-- Displays the course ID, item ID, item name, item type,
+-- AI status, and full course item stage data.
+-- Results are sorted by course ID and course item name.
+
+SELECT
+    c.course_number AS full_course_id,
+    ci.id AS course_item_id,
+    ci.name AS course_item_name,
+    ci.item_type,
+    ci.item_type_source_code,
+    ci.ai_status,
+    ci.stage AS course_item_stage
+
+FROM CDM_LMS.COURSE c
+
+INNER JOIN CDM_LMS.COURSE_ITEM ci
+    ON ci.course_id = c.id
+
+WHERE
+    c.row_deleted_time IS NULL
+    AND ci.row_deleted_time IS NULL
+    AND ci.item_type_source_code = 'resource/x-bb-asmt-test-link'
+
+    AND ci.name ILIKE '%AI Conversation%'
+
+    AND ci.name NOT ILIKE '%Socratic%'
+    AND ci.name NOT ILIKE '%Role Play%'
+    AND ci.name NOT ILIKE '%Role-Play%'
+    AND ci.name NOT ILIKE '%Role-Playing%'
+
+ORDER BY
+    c.course_number,
+    ci.name;
