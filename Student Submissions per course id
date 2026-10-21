@@ -1,0 +1,105 @@
+
+WITH student_submissions AS (
+    SELECT
+        s.id AS submission_id,
+        s.course_id,
+        s.course_item_id,
+        s.person_course_id,
+        s.name AS submission_name,
+        s.item_type_source_code,
+        s.submitted_time,
+        s.created_time,
+        s.modified_time
+    FROM CDM_LMS.SUBMISSION s
+
+    INNER JOIN CDM_LMS.COURSE c
+        ON c.id = s.course_id
+
+    INNER JOIN CDM_LMS.PERSON_COURSE pc
+        ON pc.id = s.person_course_id
+       AND pc.course_id = c.id
+
+    INNER JOIN CDM_LMS.PERSON p
+        ON p.id = pc.person_id
+
+    WHERE c.course_number = 'AGR_1234_WL_01_2026_FA'
+      AND p.stage:user_id::STRING = 'studentusername'
+),
+
+gradebook_dates AS (
+    SELECT
+        gb.course_id,
+        gb.course_item_id,
+        MIN(gb.due_time) AS due_date
+    FROM CDM_LMS.GRADEBOOK gb
+
+    INNER JOIN CDM_LMS.COURSE c
+        ON c.id = gb.course_id
+
+    WHERE c.course_number = 'AGR_1234_WL_01_2026_FA'
+      AND gb.row_deleted_time IS NULL
+      AND gb.deleted_ind = 0
+
+    GROUP BY
+        gb.course_id,
+        gb.course_item_id
+)
+
+SELECT
+    c.course_number AS COURSE_ID,
+    p.stage:user_id::STRING AS STUDENT_USER_ID,
+
+    s.submission_id AS SUBMISSION_ID,
+
+    COALESCE(
+        ci.name,
+        s.submission_name
+    ) AS ACTIVITY_NAME,
+
+    s.submission_name AS SUBMISSION_NAME,
+
+    gd.due_date AS DUE_DATE,
+
+    s.submitted_time AS SUBMISSION_DATE,
+
+    s.created_time AS CREATED_DATE,
+    s.modified_time AS MODIFIED_DATE,
+
+    CASE
+        WHEN s.submitted_time IS NULL
+            THEN 'NO SUBMISSION DATE'
+        WHEN gd.due_date IS NULL
+            THEN 'SUBMITTED - DUE DATE UNKNOWN'
+        WHEN s.submitted_time > gd.due_date
+            THEN 'LATE'
+        ELSE 'ON TIME'
+    END AS SUBMISSION_STATUS,
+
+    s.item_type_source_code AS SUBMISSION_TYPE,
+
+    s.course_item_id AS COURSE_ITEM_ID
+
+FROM student_submissions s
+
+INNER JOIN CDM_LMS.COURSE c
+    ON c.id = s.course_id
+
+INNER JOIN CDM_LMS.PERSON_COURSE pc
+    ON pc.id = s.person_course_id
+   AND pc.course_id = s.course_id
+
+INNER JOIN CDM_LMS.PERSON p
+    ON p.id = pc.person_id
+
+LEFT JOIN CDM_LMS.COURSE_ITEM ci
+    ON ci.id = s.course_item_id
+   AND ci.course_id = s.course_id
+
+LEFT JOIN gradebook_dates gd
+    ON gd.course_item_id = s.course_item_id
+   AND gd.course_id = s.course_id
+
+ORDER BY
+    s.submitted_time DESC NULLS LAST,
+    s.created_time DESC,
+    s.submission_id;
