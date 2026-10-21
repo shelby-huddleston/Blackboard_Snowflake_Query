@@ -1,4 +1,8 @@
-
+/*
+Retrieves all student submissions for a specified Blackboard
+course and username, including activity names, due dates,
+submission dates, and late/on-time status.
+*/
 WITH student_submissions AS (
     SELECT
         s.id AS submission_id,
